@@ -28,6 +28,7 @@ function loadSidePanelWidth(): number {
 export function Editor() {
   const hasVideo = useEditorStore((s) => s.videoUrl !== null);
   const subtitleCount = useEditorStore((s) => s.subtitles.length);
+  const expectedVideo = useEditorStore((s) => s.expectedVideo);
   const [tab, setTab] = useState<Tab>('subtitles');
   const [showExport, setShowExport] = useState(false);
   const [sidePanelWidth, setSidePanelWidthState] = useState(loadSidePanelWidth);
@@ -102,8 +103,10 @@ export function Editor() {
           <div className="editor__empty-content">
             {subtitleCount > 0 && (
               <p className="editor__project-notice">
-                Project loaded — {subtitleCount} subtitle{subtitleCount === 1 ? '' : 's'} ready. Upload
-                the matching video below to continue editing.
+                Project loaded — {subtitleCount} subtitle{subtitleCount === 1 ? '' : 's'} ready.{' '}
+                {expectedVideo
+                  ? `Select "${expectedVideo.name}" (${expectedVideo.width}×${expectedVideo.height}) below to continue editing.`
+                  : 'Upload the matching video below to continue editing.'}
               </p>
             )}
             <UploadDropzone />
@@ -216,9 +219,14 @@ function Header({ onExport }: { onExport: () => void }) {
 
   const openProjectFile = async (file: File) => {
     try {
-      const { subtitles: subs, style: st } = parseProjectFile(await file.text());
-      loadProject({ subtitles: subs, style: st });
+      const { subtitles: subs, style: st, video } = parseProjectFile(await file.text());
+      loadProject({ subtitles: subs, style: st, video });
       setProjectError(false);
+      // The project file only stores the video's name/metadata, never its
+      // bytes (a normal browser tab can't read a file by path — only ones
+      // the user actively picks) — so immediately prompt for it, letting
+      // the user browse to wherever it actually lives.
+      videoInput.current?.click();
     } catch {
       setProjectError(true);
     }

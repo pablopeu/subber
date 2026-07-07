@@ -29,6 +29,12 @@ interface EditorState {
   videoMeta: VideoMeta | null;
   currentTime: number;
   isPlaying: boolean;
+  /**
+   * The video a loaded project expects (name/dimensions/duration), shown as
+   * a hint until the matching file is actually attached via setVideo — a
+   * project file never embeds the video itself.
+   */
+  expectedVideo: VideoMeta | null;
 
   // Subtitles
   subtitles: Subtitle[];
@@ -76,7 +82,7 @@ interface EditorState {
   /** Resets to a blank project: no video, no subtitles, default style. */
   newProject(): void;
   /** Replaces subtitles + style with a loaded project's; clears undo history. */
-  loadProject(data: { subtitles: Subtitle[]; style: SubtitleStyle }): void;
+  loadProject(data: { subtitles: Subtitle[]; style: SubtitleStyle; video?: VideoMeta | null }): void;
   /** Marks the current history position as the last-saved point. */
   markSaved(): void;
 }
@@ -129,6 +135,7 @@ function createEditorStore() {
       videoUrl: null,
       videoFile: null,
       videoMeta: null,
+      expectedVideo: null,
       currentTime: 0,
       isPlaying: false,
 
@@ -148,6 +155,7 @@ function createEditorStore() {
           videoFile: file,
           videoUrl: URL.createObjectURL(file),
           videoMeta: null,
+          expectedVideo: null,
           currentTime: 0,
           isPlaying: false,
         });
@@ -318,6 +326,7 @@ function createEditorStore() {
           videoUrl: null,
           videoFile: null,
           videoMeta: null,
+          expectedVideo: null,
           currentTime: 0,
           isPlaying: false,
           subtitles: [],
@@ -332,6 +341,7 @@ function createEditorStore() {
         set({
           subtitles: sortSubtitles(data.subtitles),
           style: data.style,
+          expectedVideo: data.video ?? null,
           selectedId: null,
           history: [],
           savedHistoryLength: 0,
