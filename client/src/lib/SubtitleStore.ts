@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Subtitle } from '../types/Subtitle';
-import { createSubtitle, sortSubtitles, styleSourceCue, uid } from '../types/Subtitle';
+import { createSubtitle, resolveCueStyles, sortSubtitles, uid } from '../types/Subtitle';
 import type { StylePreset, SubtitleStyle } from '../types/Style';
 import { DEFAULT_STYLE } from '../types/Style';
 import { loadCustomPresets, saveCustomPresets } from './presets';
@@ -174,14 +174,18 @@ function createEditorStore() {
   },
 
   updateStyleAt(cueId, patch) {
-    const source = styleSourceCue(get().subtitles, cueId);
-    if (source) {
-      get().updateSubtitle(source.id, {
-        styleOverride: { ...source.styleOverride, ...patch },
-      });
-    } else {
+    const subs = get().subtitles;
+    const cue = subs.find((s) => s.id === cueId);
+    if (!cue) {
+      // No cue (e.g. the idle caption box) — fall back to the base style.
       get().updateStyle(patch);
+      return;
     }
+    // Editing a cue starts (or updates) a style segment at THIS cue, merging
+    // the cue's current effective style with the patch. The change then sticks
+    // to this cue and the ones inheriting from it — "selected cue onward".
+    const effective = resolveCueStyles(subs, get().style).get(cueId) ?? get().style;
+    get().updateSubtitle(cueId, { styleOverride: { ...effective, ...patch } });
   },
 
   applyPreset(preset) {

@@ -427,6 +427,19 @@ input[type='checkbox'] {
   padding-bottom: 24px;
 }
 
+.style-panel__scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 0;
+}
+
+.style-panel__scope-hint {
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.6;
+}
+
 .style-section {
   border-bottom: 1px solid var(--border);
   padding: 12px;

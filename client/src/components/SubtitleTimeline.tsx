@@ -104,19 +104,54 @@ export function SubtitleTimeline() {
     }
   };
 
-  // Ruler / empty-track scrubbing.
+  // Ruler / empty-track scrubbing. Near the left/right edges the track keeps
+  // auto-scrolling so the playhead can reach the very start or end of the video.
   const scrubbing = useRef(false);
+  const scrubEdge = useRef(0); // -1 left edge, +1 right edge, 0 none
+  const EDGE = 48;
+
+  const edgeAt = (clientX: number) => {
+    const el = scrollRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    if (clientX < rect.left + EDGE) return -1;
+    if (clientX > rect.right - EDGE) return 1;
+    return 0;
+  };
+
   const onTrackPointerDown = (e: React.PointerEvent) => {
     scrubbing.current = true;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    seekVideo(timeAtPointer(e));
+    scrubEdge.current = edgeAt(e.clientX);
+    if (scrubEdge.current === 0) seekVideo(timeAtPointer(e));
   };
   const onTrackPointerMove = (e: React.PointerEvent) => {
-    if (scrubbing.current) seekVideo(timeAtPointer(e));
+    if (!scrubbing.current) return;
+    scrubEdge.current = edgeAt(e.clientX);
+    if (scrubEdge.current === 0) seekVideo(timeAtPointer(e));
   };
   const onTrackPointerUp = () => {
     scrubbing.current = false;
+    scrubEdge.current = 0;
   };
+
+  // While scrubbing at an edge, keep scrolling + seeking toward that end.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const el = scrollRef.current;
+      const dir = scrubEdge.current;
+      if (el && dir !== 0) {
+        const max = Math.max(0, totalWidth - el.clientWidth);
+        el.scrollLeft = clamp(el.scrollLeft + dir * 22, 0, max);
+        const t = (dir > 0 ? el.scrollLeft + el.clientWidth : el.scrollLeft) / pxPerSec;
+        seekVideo(clamp(t, 0, duration));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pxPerSec, duration, totalWidth]);
 
   // Keep the playhead visible while playing.
   const isPlaying = useEditorStore((s) => s.isPlaying);

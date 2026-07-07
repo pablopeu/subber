@@ -1,17 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type React from 'react';
 import { useEditorStore } from '../lib/SubtitleStore';
 import { loadFonts, type FontInfo } from '../lib/fonts';
-import type { SubtitleAlignment } from '../types/Style';
+import { resolveCueStyles } from '../types/Subtitle';
+import type { SubtitleStyle, SubtitleAlignment } from '../types/Style';
 
 /**
- * Full styling controls, bound directly to the global style model.
+ * Full styling controls. By default edits target the SELECTED cue's style
+ * segment ("selected cue onward") so a change sticks to that cue and the ones
+ * inheriting from it; toggle to "Base style" to edit the global default.
  * Every change re-renders only the Konva subtitle layer — the same values
  * feed the ASS generator, so what you tweak here is what FFmpeg burns in.
  */
 export function StylePanel() {
-  const style = useEditorStore((s) => s.style);
-  const updateStyle = useEditorStore((s) => s.updateStyle);
+  const baseStyle = useEditorStore((s) => s.style);
+  const subtitles = useEditorStore((s) => s.subtitles);
+  const selectedId = useEditorStore((s) => s.selectedId);
+  const updateStyleBase = useEditorStore((s) => s.updateStyle);
+  const updateStyleAt = useEditorStore((s) => s.updateStyleAt);
+
+  const [target, setTarget] = useState<'base' | 'cue'>('cue');
+  const cueMode = target === 'cue' && selectedId != null;
+  const effectiveMap = useMemo(
+    () => resolveCueStyles(subtitles, baseStyle),
+    [subtitles, baseStyle],
+  );
+  // The style the controls show + edit: the selected cue's effective style,
+  // or the base style when no cue is selected (or "Base style" is picked).
+  const style: SubtitleStyle = cueMode ? effectiveMap.get(selectedId!) ?? baseStyle : baseStyle;
+  const updateStyle = (patch: Partial<SubtitleStyle>) => {
+    if (cueMode) updateStyleAt(selectedId!, patch);
+    else updateStyleBase(patch);
+  };
+  const selectedIndex = selectedId ? subtitles.findIndex((s) => s.id === selectedId) : -1;
   // The inline (text-hugging) background; superseded by caption box mode.
   const inlineBackground = style.background && !style.captionBox;
 
@@ -22,6 +43,29 @@ export function StylePanel() {
 
   return (
     <div className="style-panel">
+      <div className="style-panel__scope">
+        <div className="btn-group">
+          <button
+            className={`btn btn--small btn--toggle${!cueMode ? ' is-active' : ''}`}
+            onClick={() => setTarget('base')}
+          >
+            Base style
+          </button>
+          <button
+            className={`btn btn--small btn--toggle${cueMode ? ' is-active' : ''}`}
+            disabled={!selectedId}
+            onClick={() => setTarget('cue')}
+            title={selectedId ? 'Apply edits from the selected cue onward' : 'Select a cue first'}
+          >
+            Selected cue onward
+          </button>
+        </div>
+        <span className="style-panel__scope-hint">
+          {cueMode
+            ? `Editing cue #${selectedIndex + 1} — applies from here onward`
+            : 'Editing the base style (every cue)'}
+        </span>
+      </div>
       <Section title="Font">
         <label className="field field--wide">
           <span className="field__label">Family</span>
@@ -101,21 +145,6 @@ export function StylePanel() {
       </Section>
 
       <Section
-        title="Background box"
-        toggle={{ on: style.background, set: (background) => updateStyle({ background }) }}
-        disabled={style.captionBox}
-        disabledHint="caption box is active"
-      >
-        {inlineBackground && (
-          <>
-            <ColorField label="Color" value={style.backgroundColor} onChange={(backgroundColor) => updateStyle({ backgroundColor })} />
-            <SliderField label="Opacity" value={style.backgroundOpacity} min={0} max={1} step={0.05} onChange={(backgroundOpacity) => updateStyle({ backgroundOpacity })} />
-            <NumberField label="Corner radius" value={style.borderRadius} min={0} max={60} hint="preview only" onChange={(borderRadius) => updateStyle({ borderRadius })} />
-          </>
-        )}
-      </Section>
-
-      <Section
         title="Position"
         disabled={style.captionBox}
         disabledHint="the caption box sets the position"
@@ -151,13 +180,6 @@ export function StylePanel() {
         ) : (
           <p className="style-panel__hint">Tip: drag the subtitle on the video to position it freely.</p>
         )}
-      </Section>
-
-      <Section title="Animation">
-        <p className="style-panel__hint">Animated subtitles are coming soon.</p>
-        <select className="field__input" value={style.animation} disabled>
-          <option value="none">None</option>
-        </select>
       </Section>
     </div>
   );

@@ -119,7 +119,7 @@ function SubtitleRow({
       <textarea
         className="sub-row__textarea"
         value={sub.text}
-        rows={2}
+        rows={5}
         placeholder="Subtitle text…"
         onChange={(e) => updateSubtitle(sub.id, { text: e.target.value })}
         autoFocus
