@@ -12,6 +12,9 @@ import { clamp } from './time';
  * the time display and the subtitle canvas — never the <video> element.
  */
 
+/** Minimum length either half of a split cue is allowed to end up with. */
+const MIN_SPLIT_DURATION = 0.1;
+
 export interface VideoMeta {
   duration: number;
   width: number;
@@ -46,6 +49,8 @@ interface EditorState {
   updateSubtitle(id: string, patch: Partial<Omit<Subtitle, 'id'>>): void;
   moveSubtitle(id: string, newStart: number): void;
   deleteSubtitle(id: string): void;
+  /** Splits a cue in two at time `at`, giving each half a copy of the text. */
+  splitSubtitle(id: string, at: number): void;
   selectSubtitle(id: string | null): void;
 
   updateStyle(patch: Partial<SubtitleStyle>): void;
@@ -163,6 +168,35 @@ function createEditorStore() {
       subtitles: s.subtitles.filter((sub) => sub.id !== id),
       selectedId: s.selectedId === id ? null : s.selectedId,
     }));
+  },
+
+  splitSubtitle(id, at) {
+    set((s) => {
+      const idx = s.subtitles.findIndex((sub) => sub.id === id);
+      if (idx === -1) return s;
+      const sub = s.subtitles[idx];
+      const t = clamp(at, sub.start + MIN_SPLIT_DURATION, sub.end - MIN_SPLIT_DURATION);
+      if (t <= sub.start || t >= sub.end) return s;
+
+      // Divide the text at roughly the same point the time is split, so
+      // each half starts with a sensible default the user can then edit.
+      const words = sub.text.trim().split(/\s+/).filter(Boolean);
+      let firstText = sub.text;
+      let secondText = sub.text;
+      if (words.length >= 2) {
+        const ratio = (t - sub.start) / (sub.end - sub.start);
+        const cut = Math.min(words.length - 1, Math.max(1, Math.round(ratio * words.length)));
+        firstText = words.slice(0, cut).join(' ');
+        secondText = words.slice(cut).join(' ');
+      }
+
+      const first: Subtitle = { ...sub, end: t, text: firstText };
+      const second: Subtitle = createSubtitle(t, sub.end, secondText);
+
+      const next = [...s.subtitles];
+      next.splice(idx, 1, first, second);
+      return { subtitles: sortSubtitles(next), selectedId: second.id };
+    });
   },
 
   selectSubtitle(id) {

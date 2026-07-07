@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type React from 'react';
 import { togglePlayback, useEditorStore } from '../lib/SubtitleStore';
 import { parseSubtitleFileFromFile, SUBTITLE_EXTENSIONS } from '../lib/SubtitleParser';
 import { loadFonts } from '../lib/fonts';
@@ -12,11 +13,25 @@ import { UploadDropzone } from '../components/UploadDropzone';
 
 type Tab = 'subtitles' | 'style' | 'presets';
 
+const SIDE_PANEL_WIDTH_KEY = 'subber.sidePanelWidth';
+const SIDE_PANEL_MIN = 260;
+const SIDE_PANEL_MAX = 640;
+
+function loadSidePanelWidth(): number {
+  const raw = Number(localStorage.getItem(SIDE_PANEL_WIDTH_KEY));
+  return raw >= SIDE_PANEL_MIN && raw <= SIDE_PANEL_MAX ? raw : 340;
+}
+
 /** Main editor page: header · preview + side panel · timeline. */
 export function Editor() {
   const hasVideo = useEditorStore((s) => s.videoUrl !== null);
   const [tab, setTab] = useState<Tab>('subtitles');
   const [showExport, setShowExport] = useState(false);
+  const [sidePanelWidth, setSidePanelWidthState] = useState(loadSidePanelWidth);
+  const setSidePanelWidth = (w: number) => {
+    setSidePanelWidthState(w);
+    localStorage.setItem(SIDE_PANEL_WIDTH_KEY, String(w));
+  };
 
   // Start webfont loading immediately so the preview measures correctly.
   useEffect(() => {
@@ -44,7 +59,11 @@ export function Editor() {
         <>
           <div className="editor__main">
             <VideoPlayer />
-            <aside className="side-panel">
+            <PanelResizer width={sidePanelWidth} onResize={setSidePanelWidth} />
+            <aside
+              className="side-panel"
+              style={{ '--side-panel-width': `${sidePanelWidth}px` } as React.CSSProperties}
+            >
               <nav className="side-panel__tabs">
                 <TabButton tab="subtitles" current={tab} onSelect={setTab} label="Subtitles" />
                 <TabButton tab="style" current={tab} onSelect={setTab} label="Style" />
@@ -66,6 +85,49 @@ export function Editor() {
       )}
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
     </div>
+  );
+}
+
+/**
+ * Drag handle between the video preview and the side panel. Dragging it
+ * resizes the side panel (the video stage just fills whatever is left via
+ * flex: 1); the chosen width is persisted so it survives a reload.
+ */
+function PanelResizer({
+  width,
+  onResize,
+}: {
+  width: number;
+  onResize: (w: number) => void;
+}) {
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { startX: e.clientX, startWidth: width };
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const next = drag.startWidth - (e.clientX - drag.startX);
+    onResize(Math.min(SIDE_PANEL_MAX, Math.max(SIDE_PANEL_MIN, next)));
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    dragRef.current = null;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  return (
+    <div
+      className="panel-resizer"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      title="Drag to resize"
+    />
   );
 }
 

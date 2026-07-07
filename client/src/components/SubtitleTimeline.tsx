@@ -32,6 +32,8 @@ export function SubtitleTimeline() {
   const moveSubtitle = useEditorStore((s) => s.moveSubtitle);
   const selectSubtitle = useEditorStore((s) => s.selectSubtitle);
   const addSubtitleAt = useEditorStore((s) => s.addSubtitleAt);
+  const splitSubtitle = useEditorStore((s) => s.splitSubtitle);
+  const currentTime = useEditorStore((s) => s.currentTime);
 
   const [pxPerSec, setPxPerSec] = useState(80);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -155,7 +157,6 @@ export function SubtitleTimeline() {
 
   // Keep the playhead visible while playing.
   const isPlaying = useEditorStore((s) => s.isPlaying);
-  const currentTime = useEditorStore((s) => s.currentTime);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !isPlaying) return;
@@ -167,6 +168,9 @@ export function SubtitleTimeline() {
 
   if (!duration) return null;
 
+  const selectedSub = subtitles.find((s) => s.id === selectedId);
+  const canSplit = !!selectedSub && currentTime > selectedSub.start + MIN_DURATION && currentTime < selectedSub.end - MIN_DURATION;
+
   return (
     <div className="timeline">
       <div className="timeline__toolbar">
@@ -175,6 +179,14 @@ export function SubtitleTimeline() {
           onClick={() => selectSubtitle(addSubtitleAt(useEditorStore.getState().currentTime).id)}
         >
           + Add at playhead
+        </button>
+        <button
+          className="btn btn--small"
+          disabled={!canSplit}
+          onClick={() => selectedSub && splitSubtitle(selectedSub.id, currentTime)}
+          title="Split the selected subtitle at the playhead (or double-click a block)"
+        >
+          ✂ Split at playhead
         </button>
         <div className="timeline__zoom">
           <button className="btn btn--icon" onClick={() => setPxPerSec((z) => Math.max(10, z / 1.4))} title="Zoom out">−</button>
@@ -206,7 +218,11 @@ export function SubtitleTimeline() {
                 onPointerDown={(e) => onBlockPointerDown(e, sub.id, 'move', sub.start, sub.end)}
                 onPointerMove={onBlockPointerMove}
                 onPointerUp={(e) => onBlockPointerUp(e, sub.id, sub.start)}
-                title={sub.text}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  splitSubtitle(sub.id, timeAtPointer(e));
+                }}
+                title={`${sub.text}\n\nDouble-click to split`}
               >
                 <span
                   className="timeline__handle timeline__handle--l"

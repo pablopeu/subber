@@ -44,8 +44,20 @@ body {
   flex: 1;
   display: flex;
   min-height: 0;
-  gap: 1px;
   background: var(--border);
+}
+
+.panel-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  touch-action: none;
+}
+
+.panel-resizer:hover,
+.panel-resizer:active {
+  background: var(--accent);
 }
 
 .editor__empty {
@@ -298,7 +310,7 @@ input[type='checkbox'] {
 
 /* ─── Side panel ───────────────────────────────────────────────────────── */
 .side-panel {
-  width: 340px;
+  width: var(--side-panel-width, 340px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -876,6 +888,10 @@ input[type='checkbox'] {
 
   .player__stage {
     min-height: 40vh;
+  }
+
+  .panel-resizer {
+    display: none;
   }
 
   .side-panel {

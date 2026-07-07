@@ -10,6 +10,15 @@ export interface FontInfo {
   /** URL path of the TTF, served by the backend. */
   file: string;
   weights: number[];
+  /**
+   * libass scales a style's Fontsize by the font's own (winAscent +
+   * winDescent) / unitsPerEm instead of treating it as a literal em-square
+   * pixel size the way canvas/CSS do, so the same nominal size renders at a
+   * different — usually smaller — apparent size per font family in the
+   * export than in the preview. ASSGenerator multiplies Fontsize by this
+   * factor (computed once from the TTF by fetch-fonts.mjs) to compensate.
+   */
+  sizeCorrection?: number;
 }
 
 /** Fonts assumed available on the OS even when the backend set is missing. */
@@ -43,4 +52,13 @@ export async function loadFonts(): Promise<FontInfo[]> {
     loaded = SYSTEM_FALLBACK_FONTS;
   }
   return loaded;
+}
+
+/**
+ * The export's Fontsize correction for a family (see FontInfo.sizeCorrection).
+ * Falls back to 1 (no correction) for unknown fonts or before the manifest
+ * has loaded — better to under-correct than to guess.
+ */
+export function getFontSizeCorrection(family: string): number {
+  return loaded?.find((f) => f.family === family)?.sizeCorrection ?? 1;
 }

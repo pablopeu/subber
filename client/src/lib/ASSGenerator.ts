@@ -3,6 +3,7 @@ import { resolveCueStyles, sortSubtitles } from '../types/Subtitle';
 import type { SubtitleStyle } from '../types/Style';
 import { toAssTimestamp } from './time';
 import { fitTextToBox } from './textFit';
+import { getFontSizeCorrection } from './fonts';
 
 /**
  * Generates an ASS (Advanced SubStation Alpha) file from the internal
@@ -34,6 +35,14 @@ export const SAFE_MARGIN_RATIO = 0.05;
 /** Padding of the background box, derived from font size (shared with preview). */
 export function boxPadding(style: SubtitleStyle): number {
   return Math.round(style.fontSize * 0.25);
+}
+
+/**
+ * Converts a nominal (preview) pixel font size to the value libass needs to
+ * actually render at that size for the given font — see FontInfo.sizeCorrection.
+ */
+function assFontSize(fontSize: number, fontFamily: string): number {
+  return Math.round(fontSize * getFontSizeCorrection(fontFamily) * 10) / 10;
 }
 
 /** '#rrggbb' + alpha (0..1) → ASS '&HAABBGGRR' (AA=00 is opaque). */
@@ -88,7 +97,7 @@ function buildStyleLine(name: string, style: SubtitleStyle): string {
   const fields = [
     name,
     style.fontFamily,
-    style.fontSize,
+    assFontSize(style.fontSize, style.fontFamily),
     primary,
     primary, // SecondaryColour — reserved for future karaoke support.
     outline,
@@ -139,6 +148,33 @@ function shadowTags(style: SubtitleStyle): string[] {
   return tags;
 }
 
+/** True when the shadow needs the two-layer glow treatment (see below). */
+function hasBlurredShadow(style: SubtitleStyle): boolean {
+  return style.shadow && style.shadowBlur > 0;
+}
+
+/**
+ * Override tags for a standalone "glow" event: a full duplicate of the cue,
+ * tinted with the shadow colour and blurred, meant to sit on a layer behind
+ * an unblurred copy of the text.
+ *
+ * libass's \blur blurs the *entire* glyph (fill included) once there's no
+ * outline width for it to act on instead — which is the common case here
+ * (many presets use outlineWidth 0). Blurring the live text directly turns
+ * it to illegible mush instead of the soft drop-shadow the style panel and
+ * canvas preview show. Rendering the blur on its own duplicate underneath a
+ * crisp copy reproduces the preview's actual look: sharp text, soft glow.
+ */
+function shadowGlowTag(style: SubtitleStyle): string {
+  const alpha = Math.round((1 - Math.max(0, Math.min(1, style.opacity))) * 255)
+    .toString(16)
+    .padStart(2, '0')
+    .toUpperCase();
+  const color = toAssColor(style.shadowColor).slice(4); // BBGGRR, no alpha byte
+  const blur = (style.shadowBlur / 2).toFixed(1);
+  return `\\bord0\\shad0\\1a&H${alpha}&\\1c&H${color}&\\blur${blur}`;
+}
+
 function fadeTags(style: SubtitleStyle): string[] {
   return style.fadeMs > 0 ? [`\\fad(${Math.round(style.fadeMs)},${Math.round(style.fadeMs)})`] : [];
 }
@@ -187,8 +223,20 @@ function buildCaptionBoxEvents(
   const fitted = fitTextToBox(sub.text.trim(), style, box.w, box.h);
   const cx = Math.round(box.x + box.w / 2);
   const cy = Math.round(box.y + box.h / 2);
-  const textTags = `\\an5\\pos(${cx},${cy})\\fs${fitted.fontSize}${shadowTags(style).join('')}${fade}`;
   const text = fitted.lines.map(escapeAssText).join('\\N');
+  const fs = assFontSize(fitted.fontSize, style.fontFamily);
+
+  if (hasBlurredShadow(style)) {
+    const sx = cx + Math.round(style.shadowOffsetX);
+    const sy = cy + Math.round(style.shadowOffsetY);
+    const glowTags = `\\an5\\pos(${sx},${sy})\\fs${fs}${shadowGlowTag(style)}${fade}`;
+    const glowEvent = `Dialogue: 1,${time},${styleName},,0,0,0,,{${glowTags}}${text}`;
+    const textTags = `\\an5\\pos(${cx},${cy})\\fs${fs}${fade}`;
+    const textEvent = `Dialogue: 2,${time},${styleName},,0,0,0,,{${textTags}}${text}`;
+    return [boxEvent, glowEvent, textEvent];
+  }
+
+  const textTags = `\\an5\\pos(${cx},${cy})\\fs${fs}${shadowTags(style).join('')}${fade}`;
   const textEvent = `Dialogue: 1,${time},${styleName},,0,0,0,,{${textTags}}${text}`;
 
   return [boxEvent, textEvent];
@@ -224,10 +272,52 @@ export function generateAss(
       const st = effective.get(s.id) ?? style;
       const name = nameOf(st);
       if (st.captionBox) return buildCaptionBoxEvents(s, st, video, name);
+
+      const time = `${toAssTimestamp(s.start)},${toAssTimestamp(s.end)}`;
+      const text = escapeAssText(s.text.trim());
+
+      // Background-box mode disables shadow entirely (mirrors buildOverrides'
+      // own gate), so only free/aligned text ever needs the glow treatment.
+      if (!st.background && hasBlurredShadow(st)) {
+        const fade = fadeTags(st).join('');
+
+        if (st.position) {
+          const x = Math.round(st.position.x * video.width);
+          const y = Math.round(st.position.y * video.height);
+          const sx = x + Math.round(st.shadowOffsetX);
+          const sy = y + Math.round(st.shadowOffsetY);
+          const glow = `{\\an5\\pos(${sx},${sy})${shadowGlowTag(st)}${fade}}`;
+          const main = `{\\an5\\pos(${x},${y})${fade}}`;
+          return [
+            `Dialogue: 0,${time},${name},,0,0,0,,${glow}${text}`,
+            `Dialogue: 1,${time},${name},,0,0,0,,${main}${text}`,
+          ];
+        }
+
+        // Alignment/margin layout: two events with identical text, font and
+        // alignment auto-resolve to the same anchor, so the glow copy just
+        // needs its own MarginV nudged by the vertical shadow offset — no
+        // \pos needed. Horizontal offset is skipped here: shifting MarginL/R
+        // would change the wrap width and could wrap the glow copy onto a
+        // different number of lines than the crisp copy above it.
+        const mainMarginV = Math.round(st.alignment === 'top' ? st.marginTop : st.marginBottom);
+        const glowMarginV = Math.round(
+          st.alignment === 'top'
+            ? st.marginTop + st.shadowOffsetY
+            : st.marginBottom - st.shadowOffsetY,
+        );
+        const glow = `{${shadowGlowTag(st)}${fade}}`;
+        const main = fade ? `{${fade}}` : '';
+        return [
+          `Dialogue: 0,${time},${name},,${marginH},${marginH},${glowMarginV},,${glow}${text}`,
+          `Dialogue: 1,${time},${name},,${marginH},${marginH},${mainMarginV},,${main}${text}`,
+        ];
+      }
+
       const marginV = Math.round(st.alignment === 'top' ? st.marginTop : st.marginBottom);
-      const text = buildOverrides(st, video) + escapeAssText(s.text.trim());
+      const overrideText = buildOverrides(st, video) + text;
       return [
-        `Dialogue: 0,${toAssTimestamp(s.start)},${toAssTimestamp(s.end)},${name},,${marginH},${marginH},${marginV},,${text}`,
+        `Dialogue: 0,${time},${name},,${marginH},${marginH},${marginV},,${overrideText}`,
       ];
     });
 

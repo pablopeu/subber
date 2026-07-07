@@ -27,6 +27,40 @@ const FAMILIES = [
 
 const slug = (family) => family.toLowerCase().replace(/\s+/g, '-');
 
+/** Reads one sfnt table's raw bytes out of a TTF buffer by 4-char tag. */
+function readSfntTable(buf, tag) {
+  const numTables = buf.readUInt16BE(4);
+  for (let i = 0; i < numTables; i++) {
+    const record = 12 + i * 16;
+    if (buf.toString('ascii', record, record + 4) === tag) {
+      const offset = buf.readUInt32BE(record + 8);
+      const length = buf.readUInt32BE(record + 12);
+      return buf.subarray(offset, offset + length);
+    }
+  }
+  return null;
+}
+
+/**
+ * libass scales a style's Fontsize by the font's (winAscent + winDescent) /
+ * unitsPerEm — the OS/2 table's Windows-compatible line metrics — instead of
+ * treating it as a literal em-square pixel size the way canvas/CSS do. For
+ * fonts with generous vertical metrics (common in modern webfonts) that
+ * makes libass render noticeably smaller than the same nominal size in the
+ * browser preview, and by a different amount per family. This factor lets
+ * ASSGenerator compensate so the exported burn-in matches what was designed.
+ */
+function fontSizeCorrection(buf) {
+  const head = readSfntTable(buf, 'head');
+  const os2 = readSfntTable(buf, 'OS/2');
+  if (!head || !os2 || head.length < 20 || os2.length < 78) return 1;
+  const unitsPerEm = head.readUInt16BE(18);
+  const winAscent = os2.readUInt16BE(74);
+  const winDescent = os2.readUInt16BE(76);
+  if (!unitsPerEm) return 1;
+  return Math.round(((winAscent + winDescent) / unitsPerEm) * 1000) / 1000;
+}
+
 async function fetchTtfUrls(family, weights) {
   const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${weights.join(';')}`;
   const res = await fetch(url, { headers: { 'User-Agent': 'curl/8' } });
@@ -51,18 +85,23 @@ async function main() {
     try {
       const urls = await fetchTtfUrls(family, weights);
       const saved = [];
+      let sizeCorrection = 1;
       for (const weight of weights) {
         const src = urls.get(weight) ?? urls.values().next().value;
         if (!src) continue;
         const file = path.join(FONTS_DIR, `${slug(family)}-${weight}.ttf`);
         const res = await fetch(src);
         if (!res.ok) throw new Error(`TTF download ${res.status}`);
-        await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
+        const bytes = Buffer.from(await res.arrayBuffer());
+        await fs.writeFile(file, bytes);
+        // The regular weight is the reference for sizing; metrics rarely
+        // differ meaningfully across weights within the same family.
+        if (weight === 400 || saved.length === 0) sizeCorrection = fontSizeCorrection(bytes);
         saved.push(weight);
       }
       if (saved.length) {
-        manifest.push({ family, file: `/fonts/${slug(family)}`, weights: saved });
-        console.log(`✓ ${family} (${saved.join(', ')})`);
+        manifest.push({ family, file: `/fonts/${slug(family)}`, weights: saved, sizeCorrection });
+        console.log(`✓ ${family} (${saved.join(', ')}) size×${sizeCorrection}`);
       }
     } catch (err) {
       console.warn(`✗ ${family}: ${err.message}`);
