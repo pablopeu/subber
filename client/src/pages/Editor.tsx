@@ -27,6 +27,7 @@ function loadSidePanelWidth(): number {
 /** Main editor page: header · preview + side panel · timeline. */
 export function Editor() {
   const hasVideo = useEditorStore((s) => s.videoUrl !== null);
+  const subtitleCount = useEditorStore((s) => s.subtitles.length);
   const [tab, setTab] = useState<Tab>('subtitles');
   const [showExport, setShowExport] = useState(false);
   const [sidePanelWidth, setSidePanelWidthState] = useState(loadSidePanelWidth);
@@ -98,7 +99,15 @@ export function Editor() {
         </>
       ) : (
         <div className="editor__empty">
-          <UploadDropzone />
+          <div className="editor__empty-content">
+            {subtitleCount > 0 && (
+              <p className="editor__project-notice">
+                Project loaded — {subtitleCount} subtitle{subtitleCount === 1 ? '' : 's'} ready. Upload
+                the matching video below to continue editing.
+              </p>
+            )}
+            <UploadDropzone />
+          </div>
         </div>
       )}
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
@@ -228,73 +237,75 @@ function Header({ onExport }: { onExport: () => void }) {
 
   return (
     <header className="header">
-      <span className="header__logo">
-        Subber<span className="header__logo-dot">.</span>
-      </span>
-      <span className="header__tagline">subtitle burn-in studio</span>
-      <span className="header__spacer" />
+      <div className="header__content">
+        <span className="header__logo">
+          Subber<span className="header__logo-dot">.</span>
+        </span>
+        <span className="header__tagline">subtitle burn-in studio</span>
+        <span className="header__spacer" />
 
-      <input
-        ref={videoInput}
-        type="file"
-        accept="video/*,.mp4,.mov,.mkv,.webm"
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) setVideo(f);
-          e.target.value = '';
-        }}
-      />
-      <input
-        ref={srtInput}
-        type="file"
-        accept={SUBTITLE_EXTENSIONS.join(',')}
-        hidden
-        onChange={async (e) => {
-          const f = e.target.files?.[0];
-          e.target.value = '';
-          if (!f) return;
-          try {
-            setSubtitles(await parseSubtitleFileFromFile(f));
-            setSrtError(false);
-          } catch {
-            setSrtError(true);
-          }
-        }}
-      />
-      <input
-        ref={projectInput}
-        type="file"
-        accept={`${PROJECT_EXTENSION},.json`}
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = '';
-          if (!f) return;
-          guarded({ type: 'open', file: f });
-        }}
-      />
-      {srtError && <span className="header__error">Could not parse subtitle file</span>}
-      {projectError && <span className="header__error">Could not parse project file</span>}
+        <input
+          ref={videoInput}
+          type="file"
+          accept="video/*,.mp4,.mov,.mkv,.webm"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) setVideo(f);
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={srtInput}
+          type="file"
+          accept={SUBTITLE_EXTENSIONS.join(',')}
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            try {
+              setSubtitles(await parseSubtitleFileFromFile(f));
+              setSrtError(false);
+            } catch {
+              setSrtError(true);
+            }
+          }}
+        />
+        <input
+          ref={projectInput}
+          type="file"
+          accept={`${PROJECT_EXTENSION},.json`}
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            guarded({ type: 'open', file: f });
+          }}
+        />
+        {srtError && <span className="header__error">Could not parse subtitle file</span>}
+        {projectError && <span className="header__error">Could not parse project file</span>}
 
-      <button className="btn btn--ghost" onClick={() => guarded('new')}>
-        New project
-      </button>
-      <button className="btn btn--ghost" onClick={saveProject} disabled={subtitles.length === 0}>
-        Save project
-      </button>
-      <button className="btn btn--ghost" onClick={() => projectInput.current?.click()}>
-        Open project
-      </button>
-      <button className="btn btn--ghost" onClick={() => videoInput.current?.click()}>
-        {hasVideo ? 'Replace video' : 'Upload video'}
-      </button>
-      <button className="btn btn--ghost" onClick={() => srtInput.current?.click()}>
-        Upload subtitles
-      </button>
-      <button className="btn btn--primary" onClick={onExport} disabled={!hasVideo || subtitles.length === 0}>
-        Export
-      </button>
+        <button className="btn btn--ghost" onClick={() => guarded('new')}>
+          New project
+        </button>
+        <button className="btn btn--ghost" onClick={saveProject} disabled={subtitles.length === 0}>
+          Save project
+        </button>
+        <button className="btn btn--ghost" onClick={() => projectInput.current?.click()}>
+          Open project
+        </button>
+        <button className="btn btn--ghost" onClick={() => videoInput.current?.click()}>
+          {hasVideo ? 'Replace video' : 'Upload video'}
+        </button>
+        <button className="btn btn--ghost" onClick={() => srtInput.current?.click()}>
+          Upload subtitles
+        </button>
+        <button className="btn btn--primary" onClick={onExport} disabled={!hasVideo || subtitles.length === 0}>
+          Export
+        </button>
+      </div>
       <button
         className="btn btn--ghost header__quit"
         title="Quit Subber (stops the local server)"

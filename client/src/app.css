@@ -68,16 +68,44 @@ body {
   padding: 24px;
 }
 
+.editor__empty-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.editor__project-notice {
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ─── Header ───────────────────────────────────────────────────────────── */
 .header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  padding: 10px 52px 10px 16px;
+  padding: 10px 14px 10px 16px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
+}
+
+/* Everything but Quit lives in here, and wraps on its own — Quit is a
+ * sibling outside this container so wrapped rows can never grow under (and
+ * get covered by) its fixed top-right slot. */
+.header__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
-  position: relative;
 }
 
 .header__logo {
@@ -101,10 +129,7 @@ body {
 }
 
 .header__quit {
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

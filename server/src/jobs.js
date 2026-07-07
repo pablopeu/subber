@@ -77,7 +77,10 @@ function runFfmpeg(job, { inputPath, outputPath, duration, ffmpegPath }) {
   ];
 
   job.status = 'processing';
-  const proc = spawn(ffmpegPath, args, { cwd: job.dir });
+  // windowsHide: ffmpeg.exe is a console-subsystem binary — without this it
+  // pops its own visible console window for the whole render (same reason
+  // command-line tools like ImageMagick flash a console when shelled out to).
+  const proc = spawn(ffmpegPath, args, { cwd: job.dir, windowsHide: true });
 
   let stderrTail = '';
   proc.stderr.on('data', (chunk) => {

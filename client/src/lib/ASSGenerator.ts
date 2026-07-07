@@ -194,8 +194,10 @@ function roundedRectDrawing(w: number, h: number, radius: number): string {
 }
 
 /**
- * Caption box mode: two events per cue — the box drawing (layer 0) and the
- * auto-fitted text (layer 1) — sharing timing and fade.
+ * Caption box mode: the box drawing (layer 0) plus one text event per
+ * auto-fitted line (layer 1, or layers 1+2 when the shadow needs the glow
+ * treatment) — each explicitly positioned rather than joined with \N, so we
+ * control line spacing instead of libass. All events share timing and fade.
  */
 function buildCaptionBoxEvents(
   sub: Subtitle,
@@ -223,23 +225,38 @@ function buildCaptionBoxEvents(
   const fitted = fitTextToBox(sub.text.trim(), style, box.w, box.h);
   const cx = Math.round(box.x + box.w / 2);
   const cy = Math.round(box.y + box.h / 2);
-  const text = fitted.lines.map(escapeAssText).join('\\N');
   const fs = assFontSize(fitted.fontSize, style.fontFamily);
 
-  if (hasBlurredShadow(style)) {
-    const sx = cx + Math.round(style.shadowOffsetX);
-    const sy = cy + Math.round(style.shadowOffsetY);
-    const glowTags = `\\an5\\pos(${sx},${sy})\\fs${fs}${shadowGlowTag(style)}${fade}`;
-    const glowEvent = `Dialogue: 1,${time},${styleName},,0,0,0,,{${glowTags}}${text}`;
-    const textTags = `\\an5\\pos(${cx},${cy})\\fs${fs}${fade}`;
-    const textEvent = `Dialogue: 2,${time},${styleName},,0,0,0,,{${textTags}}${text}`;
-    return [boxEvent, glowEvent, textEvent];
-  }
+  // libass derives a multi-line event's line-to-line advance from the same
+  // per-font metrics that assFontSize() compensates for, so simply joining
+  // lines with \N re-inflates the gap between them by that same factor —
+  // fine for the (corrected) glyph size, wrong for spacing. Positioning each
+  // line as its own event at a y we compute from the *nominal* fontSize and
+  // lineSpacing (matching the canvas preview) keeps glyphs correctly sized
+  // without stretching the box's line spacing.
+  const lineHeight = fitted.fontSize * style.lineSpacing;
+  const totalHeight = fitted.lines.length * lineHeight;
+  const lineY = (i: number) => Math.round(cy - totalHeight / 2 + lineHeight * (i + 0.5));
+  const blurred = hasBlurredShadow(style);
 
-  const textTags = `\\an5\\pos(${cx},${cy})\\fs${fs}${shadowTags(style).join('')}${fade}`;
-  const textEvent = `Dialogue: 1,${time},${styleName},,0,0,0,,{${textTags}}${text}`;
+  const events = [boxEvent];
+  fitted.lines.forEach((line, i) => {
+    const text = escapeAssText(line);
+    const y = lineY(i);
+    if (blurred) {
+      const sx = cx + Math.round(style.shadowOffsetX);
+      const sy = y + Math.round(style.shadowOffsetY);
+      const glowTags = `\\an5\\pos(${sx},${sy})\\fs${fs}${shadowGlowTag(style)}${fade}`;
+      events.push(`Dialogue: 1,${time},${styleName},,0,0,0,,{${glowTags}}${text}`);
+      const textTags = `\\an5\\pos(${cx},${y})\\fs${fs}${fade}`;
+      events.push(`Dialogue: 2,${time},${styleName},,0,0,0,,{${textTags}}${text}`);
+    } else {
+      const textTags = `\\an5\\pos(${cx},${y})\\fs${fs}${shadowTags(style).join('')}${fade}`;
+      events.push(`Dialogue: 1,${time},${styleName},,0,0,0,,{${textTags}}${text}`);
+    }
+  });
 
-  return [boxEvent, textEvent];
+  return events;
 }
 
 export function generateAss(
