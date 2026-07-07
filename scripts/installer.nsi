@@ -48,6 +48,11 @@ ShowUnInstDetails show
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
+
+; Finish page offers to launch Subber right away; checked by default (the
+; MUI2 default — no MUI_FINISHPAGE_RUN_NOTCHECKED override).
+!define MUI_FINISHPAGE_RUN "$INSTDIR\Subber.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Run ${APPFRIENDLY}"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES

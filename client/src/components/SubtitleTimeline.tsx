@@ -33,6 +33,8 @@ export function SubtitleTimeline() {
   const selectSubtitle = useEditorStore((s) => s.selectSubtitle);
   const addSubtitleAt = useEditorStore((s) => s.addSubtitleAt);
   const splitSubtitle = useEditorStore((s) => s.splitSubtitle);
+  const undo = useEditorStore((s) => s.undo);
+  const canUndo = useEditorStore((s) => s.history.length > 0);
   const currentTime = useEditorStore((s) => s.currentTime);
 
   const [pxPerSec, setPxPerSec] = useState(80);
@@ -187,6 +189,14 @@ export function SubtitleTimeline() {
           title="Split the selected subtitle at the playhead (or double-click a block)"
         >
           ✂ Split at playhead
+        </button>
+        <button
+          className="btn btn--small"
+          disabled={!canUndo}
+          onClick={() => undo()}
+          title="Undo the last edit (Ctrl/Cmd+Z) — repeatable back to the start of the project"
+        >
+          ↺ Undo
         </button>
         <div className="timeline__zoom">
           <button className="btn btn--icon" onClick={() => setPxPerSec((z) => Math.max(10, z / 1.4))} title="Zoom out">−</button>

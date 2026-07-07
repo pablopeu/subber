@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type React from 'react';
-import { togglePlayback, useEditorStore } from '../lib/SubtitleStore';
+import { isDirty, togglePlayback, useEditorStore } from '../lib/SubtitleStore';
 import { parseSubtitleFileFromFile, SUBTITLE_EXTENSIONS } from '../lib/SubtitleParser';
 import { loadFonts } from '../lib/fonts';
+import { downloadBlob } from '../lib/FFmpegExporter';
+import { parseProjectFile, PROJECT_EXTENSION, projectFileName, serializeProject } from '../lib/ProjectFile';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { SubtitleTimeline } from '../components/SubtitleTimeline';
 import { SubtitleEditor } from '../components/SubtitleEditor';
@@ -38,7 +40,8 @@ export function Editor() {
     void loadFonts();
   }, []);
 
-  // Space toggles playback when not typing in a field.
+  // Space toggles playback, Ctrl/Cmd+Z undoes — both skipped while typing in
+  // a field, so a text field's own native undo still works as expected.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -46,10 +49,25 @@ export function Editor() {
       if (e.code === 'Space') {
         e.preventDefault();
         togglePlayback();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        useEditorStore.getState().undo();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Native last-resort warning for closing the tab/window directly (the
+  // header's own Quit/New/Open actions show a proper save/discard modal).
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isDirty(useEditorStore.getState())) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
 
   return (
@@ -152,15 +170,61 @@ function TabButton({
   );
 }
 
+/** What to do once a pending "discard unsaved changes?" prompt is resolved. */
+type PendingAction = 'new' | 'quit' | { type: 'open'; file: File };
+
+function quitApp(): void {
+  fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
+  setTimeout(() => window.close(), 300);
+}
+
 function Header({ onExport }: { onExport: () => void }) {
   const hasVideo = useEditorStore((s) => s.videoUrl !== null);
-  const subtitleCount = useEditorStore((s) => s.subtitles.length);
+  const subtitles = useEditorStore((s) => s.subtitles);
+  const style = useEditorStore((s) => s.style);
+  const videoFile = useEditorStore((s) => s.videoFile);
+  const videoMeta = useEditorStore((s) => s.videoMeta);
+  const dirty = useEditorStore(isDirty);
   const setVideo = useEditorStore((s) => s.setVideo);
   const setSubtitles = useEditorStore((s) => s.setSubtitles);
+  const newProject = useEditorStore((s) => s.newProject);
+  const loadProject = useEditorStore((s) => s.loadProject);
+  const markSaved = useEditorStore((s) => s.markSaved);
 
   const videoInput = useRef<HTMLInputElement>(null);
   const srtInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
   const [srtError, setSrtError] = useState(false);
+  const [projectError, setProjectError] = useState(false);
+  const [pending, setPending] = useState<PendingAction | null>(null);
+
+  const saveProject = () => {
+    const video = videoMeta ? { ...videoMeta } : null;
+    const json = serializeProject(subtitles, style, video);
+    downloadBlob(json, projectFileName(videoFile?.name));
+    markSaved();
+  };
+
+  const openProjectFile = async (file: File) => {
+    try {
+      const { subtitles: subs, style: st } = parseProjectFile(await file.text());
+      loadProject({ subtitles: subs, style: st });
+      setProjectError(false);
+    } catch {
+      setProjectError(true);
+    }
+  };
+
+  const runPending = (action: PendingAction) => {
+    if (action === 'new') newProject();
+    else if (action === 'quit') quitApp();
+    else void openProjectFile(action.file);
+  };
+
+  const guarded = (action: PendingAction) => {
+    if (dirty) setPending(action);
+    else runPending(action);
+  };
 
   return (
     <header className="header">
@@ -198,30 +262,102 @@ function Header({ onExport }: { onExport: () => void }) {
           }
         }}
       />
+      <input
+        ref={projectInput}
+        type="file"
+        accept={`${PROJECT_EXTENSION},.json`}
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          guarded({ type: 'open', file: f });
+        }}
+      />
       {srtError && <span className="header__error">Could not parse subtitle file</span>}
+      {projectError && <span className="header__error">Could not parse project file</span>}
+
+      <button className="btn btn--ghost" onClick={() => guarded('new')}>
+        New project
+      </button>
+      <button className="btn btn--ghost" onClick={saveProject} disabled={subtitles.length === 0}>
+        Save project
+      </button>
+      <button className="btn btn--ghost" onClick={() => projectInput.current?.click()}>
+        Open project
+      </button>
       <button className="btn btn--ghost" onClick={() => videoInput.current?.click()}>
         {hasVideo ? 'Replace video' : 'Upload video'}
       </button>
       <button className="btn btn--ghost" onClick={() => srtInput.current?.click()}>
         Upload subtitles
       </button>
-      <button className="btn btn--primary" onClick={onExport} disabled={!hasVideo || subtitleCount === 0}>
+      <button className="btn btn--primary" onClick={onExport} disabled={!hasVideo || subtitles.length === 0}>
         Export
       </button>
       <button
         className="btn btn--ghost header__quit"
         title="Quit Subber (stops the local server)"
         aria-label="Quit Subber"
-        onClick={() => {
-          fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
-          setTimeout(() => window.close(), 300);
-        }}
+        onClick={() => guarded('quit')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M12 4v8" />
           <path d="M7.5 7a7 7 0 1 0 9 0" />
         </svg>
       </button>
+
+      {pending && (
+        <UnsavedChangesModal
+          onSave={() => {
+            saveProject();
+            runPending(pending);
+            setPending(null);
+          }}
+          onDiscard={() => {
+            runPending(pending);
+            setPending(null);
+          }}
+          onCancel={() => setPending(null)}
+        />
+      )}
     </header>
+  );
+}
+
+function UnsavedChangesModal({
+  onSave,
+  onDiscard,
+  onCancel,
+}: {
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <header className="modal__header">
+          <h2>Unsaved changes</h2>
+        </header>
+        <div className="modal__body">
+          <p className="modal__meta">
+            This project has changes that haven't been saved. Save them before continuing?
+          </p>
+        </div>
+        <footer className="modal__footer">
+          <button className="btn btn--ghost btn--small" onClick={onDiscard}>
+            Discard
+          </button>
+          <span className="modal__spacer" />
+          <button className="btn btn--ghost btn--small" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btn btn--primary btn--small" onClick={onSave}>
+            Save
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }

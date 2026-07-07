@@ -38,6 +38,15 @@ interface EditorState {
   style: SubtitleStyle;
   customPresets: StylePreset[];
 
+  /**
+   * Undo history: a snapshot of {subtitles, style} taken right before each
+   * edit, oldest first. `undo()` walks back one entry at a time, all the
+   * way to the project's very first change — not just the last one.
+   */
+  history: Array<{ subtitles: Subtitle[]; style: SubtitleStyle }>;
+  /** history.length at the last save/load/new-project — the "clean" point. */
+  savedHistoryLength: number;
+
   // Actions
   setVideo(file: File): void;
   setVideoMeta(meta: VideoMeta): void;
@@ -52,6 +61,8 @@ interface EditorState {
   /** Splits a cue in two at time `at`, giving each half a copy of the text. */
   splitSubtitle(id: string, at: number): void;
   selectSubtitle(id: string | null): void;
+  /** Steps back through the edit history, one change at a time. */
+  undo(): void;
 
   updateStyle(patch: Partial<SubtitleStyle>): void;
   /** Patches the style a cue actually renders with: its segment's override, or the base style. */
@@ -61,6 +72,18 @@ interface EditorState {
   clearCueStyle(cueId: string): void;
   saveCustomPreset(name: string): void;
   deleteCustomPreset(id: string): void;
+
+  /** Resets to a blank project: no video, no subtitles, default style. */
+  newProject(): void;
+  /** Replaces subtitles + style with a loaded project's; clears undo history. */
+  loadProject(data: { subtitles: Subtitle[]; style: SubtitleStyle }): void;
+  /** Marks the current history position as the last-saved point. */
+  markSaved(): void;
+}
+
+/** True when there's subtitle work that hasn't been saved since the last edit. */
+export function isDirty(s: EditorState): boolean {
+  return s.subtitles.length > 0 && s.history.length !== s.savedHistoryLength;
 }
 
 /**
@@ -92,167 +115,232 @@ if (import.meta.env.DEV) {
 }
 
 function createEditorStore() {
-  return create<EditorState>((set, get) => ({
-  videoUrl: null,
-  videoFile: null,
-  videoMeta: null,
-  currentTime: 0,
-  isPlaying: false,
+  return create<EditorState>((set, get) => {
+    // Snapshots the pre-edit {subtitles, style} onto the undo stack. Called
+    // at the top of every leaf action that changes subtitle/style content,
+    // BEFORE the mutating set() — never from undo() itself, or undoing would
+    // push its own reversal back onto the stack.
+    const pushHistory = () => {
+      const s = get();
+      set({ history: [...s.history, { subtitles: s.subtitles, style: s.style }] });
+    };
 
-  subtitles: [],
-  selectedId: null,
-
-  style: { ...DEFAULT_STYLE },
-  customPresets: loadCustomPresets(),
-
-  setVideo(file) {
-    const prev = get().videoUrl;
-    if (prev) URL.revokeObjectURL(prev);
-    set({
-      videoFile: file,
-      videoUrl: URL.createObjectURL(file),
+    return {
+      videoUrl: null,
+      videoFile: null,
       videoMeta: null,
       currentTime: 0,
       isPlaying: false,
-    });
-  },
 
-  setVideoMeta(meta) {
-    set({ videoMeta: meta });
-  },
+      subtitles: [],
+      selectedId: null,
 
-  setCurrentTime(t) {
-    set({ currentTime: t });
-  },
+      style: { ...DEFAULT_STYLE },
+      customPresets: loadCustomPresets(),
 
-  setPlaying(p) {
-    set({ isPlaying: p });
-  },
+      history: [],
+      savedHistoryLength: 0,
 
-  setSubtitles(subs) {
-    set({ subtitles: sortSubtitles(subs), selectedId: null });
-  },
+      setVideo(file) {
+        const prev = get().videoUrl;
+        if (prev) URL.revokeObjectURL(prev);
+        set({
+          videoFile: file,
+          videoUrl: URL.createObjectURL(file),
+          videoMeta: null,
+          currentTime: 0,
+          isPlaying: false,
+        });
+      },
 
-  addSubtitleAt(t) {
-    const sub = createSubtitle(t, t + 2, 'New subtitle');
-    set((s) => ({
-      subtitles: sortSubtitles([...s.subtitles, sub]),
-      selectedId: sub.id,
-    }));
-    return sub;
-  },
+      setVideoMeta(meta) {
+        set({ videoMeta: meta });
+      },
 
-  updateSubtitle(id, patch) {
-    set((s) => ({
-      subtitles: sortSubtitles(
-        s.subtitles.map((sub) => (sub.id === id ? { ...sub, ...patch } : sub)),
-      ),
-    }));
-  },
+      setCurrentTime(t) {
+        set({ currentTime: t });
+      },
 
-  moveSubtitle(id, newStart) {
-    set((s) => ({
-      subtitles: sortSubtitles(
-        s.subtitles.map((sub) => {
-          if (sub.id !== id) return sub;
-          const dur = sub.end - sub.start;
-          const start = Math.max(0, newStart);
-          return { ...sub, start, end: start + dur };
-        }),
-      ),
-    }));
-  },
+      setPlaying(p) {
+        set({ isPlaying: p });
+      },
 
-  deleteSubtitle(id) {
-    set((s) => ({
-      subtitles: s.subtitles.filter((sub) => sub.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
-    }));
-  },
+      setSubtitles(subs) {
+        pushHistory();
+        set({ subtitles: sortSubtitles(subs), selectedId: null });
+      },
 
-  splitSubtitle(id, at) {
-    set((s) => {
-      const idx = s.subtitles.findIndex((sub) => sub.id === id);
-      if (idx === -1) return s;
-      const sub = s.subtitles[idx];
-      const t = clamp(at, sub.start + MIN_SPLIT_DURATION, sub.end - MIN_SPLIT_DURATION);
-      if (t <= sub.start || t >= sub.end) return s;
+      addSubtitleAt(t) {
+        pushHistory();
+        const sub = createSubtitle(t, t + 2, 'New subtitle');
+        set((s) => ({
+          subtitles: sortSubtitles([...s.subtitles, sub]),
+          selectedId: sub.id,
+        }));
+        return sub;
+      },
 
-      // Divide the text at roughly the same point the time is split, so
-      // each half starts with a sensible default the user can then edit.
-      const words = sub.text.trim().split(/\s+/).filter(Boolean);
-      let firstText = sub.text;
-      let secondText = sub.text;
-      if (words.length >= 2) {
-        const ratio = (t - sub.start) / (sub.end - sub.start);
-        const cut = Math.min(words.length - 1, Math.max(1, Math.round(ratio * words.length)));
-        firstText = words.slice(0, cut).join(' ');
-        secondText = words.slice(cut).join(' ');
-      }
+      updateSubtitle(id, patch) {
+        pushHistory();
+        set((s) => ({
+          subtitles: sortSubtitles(
+            s.subtitles.map((sub) => (sub.id === id ? { ...sub, ...patch } : sub)),
+          ),
+        }));
+      },
 
-      const first: Subtitle = { ...sub, end: t, text: firstText };
-      const second: Subtitle = createSubtitle(t, sub.end, secondText);
+      moveSubtitle(id, newStart) {
+        pushHistory();
+        set((s) => ({
+          subtitles: sortSubtitles(
+            s.subtitles.map((sub) => {
+              if (sub.id !== id) return sub;
+              const dur = sub.end - sub.start;
+              const start = Math.max(0, newStart);
+              return { ...sub, start, end: start + dur };
+            }),
+          ),
+        }));
+      },
 
-      const next = [...s.subtitles];
-      next.splice(idx, 1, first, second);
-      return { subtitles: sortSubtitles(next), selectedId: second.id };
-    });
-  },
+      deleteSubtitle(id) {
+        pushHistory();
+        set((s) => ({
+          subtitles: s.subtitles.filter((sub) => sub.id !== id),
+          selectedId: s.selectedId === id ? null : s.selectedId,
+        }));
+      },
 
-  selectSubtitle(id) {
-    set({ selectedId: id });
-  },
+      splitSubtitle(id, at) {
+        const s = get();
+        const idx = s.subtitles.findIndex((sub) => sub.id === id);
+        if (idx === -1) return;
+        const sub = s.subtitles[idx];
+        const t = clamp(at, sub.start + MIN_SPLIT_DURATION, sub.end - MIN_SPLIT_DURATION);
+        if (t <= sub.start || t >= sub.end) return;
 
-  updateStyle(patch) {
-    set((s) => ({ style: { ...s.style, ...patch } }));
-  },
+        // Divide the text at roughly the same point the time is split, so
+        // each half starts with a sensible default the user can then edit.
+        const words = sub.text.trim().split(/\s+/).filter(Boolean);
+        let firstText = sub.text;
+        let secondText = sub.text;
+        if (words.length >= 2) {
+          const ratio = (t - sub.start) / (sub.end - sub.start);
+          const cut = Math.min(words.length - 1, Math.max(1, Math.round(ratio * words.length)));
+          firstText = words.slice(0, cut).join(' ');
+          secondText = words.slice(cut).join(' ');
+        }
 
-  updateStyleAt(cueId, patch) {
-    const subs = get().subtitles;
-    const cue = subs.find((s) => s.id === cueId);
-    if (!cue) {
-      // No cue (e.g. the idle caption box) — fall back to the base style.
-      get().updateStyle(patch);
-      return;
-    }
-    // Editing a cue starts (or updates) a style segment at THIS cue, merging
-    // the cue's current effective style with the patch. The change then sticks
-    // to this cue and the ones inheriting from it — "selected cue onward".
-    const effective = resolveCueStyles(subs, get().style).get(cueId) ?? get().style;
-    get().updateSubtitle(cueId, { styleOverride: { ...effective, ...patch } });
-  },
+        const first: Subtitle = { ...sub, end: t, text: firstText };
+        const second: Subtitle = createSubtitle(t, sub.end, secondText);
 
-  applyPreset(preset) {
-    set({ style: { ...preset.style } });
-  },
+        const next = [...s.subtitles];
+        next.splice(idx, 1, first, second);
 
-  applyPresetToCue(cueId, preset) {
-    get().updateSubtitle(cueId, {
-      styleOverride: { ...preset.style },
-      presetName: preset.name,
-    });
-  },
+        pushHistory();
+        set({ subtitles: sortSubtitles(next), selectedId: second.id });
+      },
 
-  clearCueStyle(cueId) {
-    get().updateSubtitle(cueId, { styleOverride: undefined, presetName: undefined });
-  },
+      selectSubtitle(id) {
+        set({ selectedId: id });
+      },
 
-  saveCustomPreset(name) {
-    const preset: StylePreset = {
-      id: uid(),
-      name,
-      builtin: false,
-      style: { ...get().style },
+      undo() {
+        const s = get();
+        if (s.history.length === 0) return;
+        const prev = s.history[s.history.length - 1];
+        set({
+          subtitles: prev.subtitles,
+          style: prev.style,
+          history: s.history.slice(0, -1),
+          selectedId: null,
+        });
+      },
+
+      updateStyle(patch) {
+        pushHistory();
+        set((s) => ({ style: { ...s.style, ...patch } }));
+      },
+
+      updateStyleAt(cueId, patch) {
+        const subs = get().subtitles;
+        const cue = subs.find((s) => s.id === cueId);
+        if (!cue) {
+          // No cue (e.g. the idle caption box) — fall back to the base style.
+          get().updateStyle(patch);
+          return;
+        }
+        // Editing a cue starts (or updates) a style segment at THIS cue, merging
+        // the cue's current effective style with the patch. The change then sticks
+        // to this cue and the ones inheriting from it — "selected cue onward".
+        const effective = resolveCueStyles(subs, get().style).get(cueId) ?? get().style;
+        get().updateSubtitle(cueId, { styleOverride: { ...effective, ...patch } });
+      },
+
+      applyPreset(preset) {
+        pushHistory();
+        set({ style: { ...preset.style } });
+      },
+
+      applyPresetToCue(cueId, preset) {
+        get().updateSubtitle(cueId, {
+          styleOverride: { ...preset.style },
+          presetName: preset.name,
+        });
+      },
+
+      clearCueStyle(cueId) {
+        get().updateSubtitle(cueId, { styleOverride: undefined, presetName: undefined });
+      },
+
+      saveCustomPreset(name) {
+        const preset: StylePreset = {
+          id: uid(),
+          name,
+          builtin: false,
+          style: { ...get().style },
+        };
+        const customPresets = [...get().customPresets, preset];
+        saveCustomPresets(customPresets);
+        set({ customPresets });
+      },
+
+      deleteCustomPreset(id) {
+        const customPresets = get().customPresets.filter((p) => p.id !== id);
+        saveCustomPresets(customPresets);
+        set({ customPresets });
+      },
+
+      newProject() {
+        const prev = get().videoUrl;
+        if (prev) URL.revokeObjectURL(prev);
+        set({
+          videoUrl: null,
+          videoFile: null,
+          videoMeta: null,
+          currentTime: 0,
+          isPlaying: false,
+          subtitles: [],
+          selectedId: null,
+          style: { ...DEFAULT_STYLE },
+          history: [],
+          savedHistoryLength: 0,
+        });
+      },
+
+      loadProject(data) {
+        set({
+          subtitles: sortSubtitles(data.subtitles),
+          style: data.style,
+          selectedId: null,
+          history: [],
+          savedHistoryLength: 0,
+        });
+      },
+
+      markSaved() {
+        set((s) => ({ savedHistoryLength: s.history.length }));
+      },
     };
-    const customPresets = [...get().customPresets, preset];
-    saveCustomPresets(customPresets);
-    set({ customPresets });
-  },
-
-  deleteCustomPreset(id) {
-    const customPresets = get().customPresets.filter((p) => p.id !== id);
-    saveCustomPresets(customPresets);
-    set({ customPresets });
-  },
-  }));
+  });
 }
