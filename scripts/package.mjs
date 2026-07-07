@@ -202,6 +202,15 @@ function findMakensis() {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
+  // Windows fallback: Chocolatey installs NSIS to Program Files (x86)\NSIS but
+  // doesn't reliably add makensis to PATH (it's what bit the CI build).
+  if (process.platform === 'win32') {
+    for (const base of [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]) {
+      if (!base) continue;
+      const candidate = path.join(base, 'NSIS', 'makensis.exe');
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
   return null;
 }
 

@@ -76,6 +76,8 @@ jobs:
       - name: Build ${{ matrix.target }} package
         env:
           SUBBER_WEB: client/dist
+          # Chocolatey puts makensis here; also surfaced as a fallback in package.mjs.
+          MAKENSIS: 'C:\Program Files (x86)\NSIS\makensis.exe'
         run: npm run package:${{ matrix.target }}
 
       - name: Upload packages
@@ -97,11 +99,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: Stage release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name 'Subber-win-x64.zip' -o -name 'Subber-Setup-x64.exe' -o -name 'Subber-linux-x64.tar.gz' \) -print -exec cp {} release/ \;
+          ls -la release/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/subber-win/*.zip
-            artifacts/subber-win/*.exe
-            artifacts/subber-linux/*.tar.gz
+          files: release/*
           generate_release_notes: true

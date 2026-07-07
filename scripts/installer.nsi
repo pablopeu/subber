@@ -4,8 +4,9 @@
 ;   makensis -DVER=<version> -DSRC=<built Subber dir> -DOUTPUT=<out exe> installer.nsi
 ;
 ; Installs Subber.exe + the web client + fonts into %LOCALAPPDATA%\Programs\Subber,
-; adds Start Menu / Desktop shortcuts and an Add/Remove Programs entry, and a
-; "Download FFmpeg" shortcut (FFmpeg is required for export). Fully uninstallable.
+; adds Start Menu / Desktop shortcuts and an Add/Remove Programs entry, a full
+; uninstaller, and an optional component that downloads FFmpeg *during* install
+; (FFmpeg is the one runtime dependency Subber needs for video export).
 
 !ifndef VER
   !define VER "0.0.0"
@@ -41,13 +42,11 @@ ShowUnInstDetails show
 !include "FileFunc.nsh"
 
 !define MUI_ABORTWARNING
-; On the finish page, offer to fetch FFmpeg (needed for export). The box is
-; opt-in; users can also run the "Download FFmpeg" shortcut later.
-!define MUI_FINISHPAGE_RUN "$INSTDIR\Setup-FFmpeg.bat"
-!define MUI_FINISHPAGE_RUN_TEXT "Download FFmpeg now (needed for export)"
+!define MUI_COMPONENTSPAGE_SMALLDESC
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -57,8 +56,10 @@ ShowUnInstDetails show
 !insertmacro MUI_LANGUAGE "Spanish"
 
 ;-----------------------------------------------------------------------------
+; Section: Subber (required)
+;-----------------------------------------------------------------------------
 
-Section "Subber" SecCore
+Section "Subber (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
 
@@ -68,12 +69,11 @@ Section "Subber" SecCore
 
   WriteUninstaller "$INSTDIR\Uninstall ${APPFRIENDLY}.exe"
 
-  ; Start Menu group: app, FFmpeg setup, uninstall.
+  ; Start Menu group: app, FFmpeg (re-download), uninstall. Desktop shortcut.
   CreateDirectory "$SMPROGRAMS\${APPFRIENDLY}"
   CreateShortCut "$SMPROGRAMS\${APPFRIENDLY}\${APPFRIENDLY}.lnk" "$INSTDIR\Subber.exe"
   CreateShortCut "$SMPROGRAMS\${APPFRIENDLY}\Download FFmpeg.lnk" "$INSTDIR\Setup-FFmpeg.bat"
   CreateShortCut "$SMPROGRAMS\${APPFRIENDLY}\Uninstall ${APPFRIENDLY}.lnk" "$INSTDIR\Uninstall ${APPFRIENDLY}.exe"
-  ; Desktop shortcut.
   CreateShortCut "$DESKTOP\${APPFRIENDLY}.lnk" "$INSTDIR\Subber.exe"
 
   ; Persist the install dir and register with Add/Remove Programs (per-user key).
@@ -96,9 +96,31 @@ Section "Subber" SecCore
 SectionEnd
 
 ;-----------------------------------------------------------------------------
+; Section: FFmpeg (optional, on by default)
+; Runs the bundled PowerShell setup during install: it skips if FFmpeg is
+; already on PATH or beside the exe, otherwise downloads it (~100 MB) and
+; extracts ffmpeg.exe next to Subber.exe — so export works right away.
+;-----------------------------------------------------------------------------
+
+Section "FFmpeg (download ~100 MB, needed for export)" SecFFmpeg
+  AddSize 102400
+  DetailPrint "Checking FFmpeg..."
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\Setup-FFmpeg.ps1"'
+  Pop $0
+  DetailPrint "FFmpeg setup finished (exit code: $0). If it failed, run 'Download FFmpeg' from the Start Menu."
+SectionEnd
+
+;-----------------------------------------------------------------------------
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "The Subber app, fonts and shortcuts (required)."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecFFmpeg} "Download FFmpeg next to Subber so video export works. Skipped automatically if FFmpeg is already installed."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+;-----------------------------------------------------------------------------
 
 Section "Uninstall"
-  ; App files (ffmpeg.exe only if the setup helper downloaded it here).
+  ; App files (ffmpeg.exe/ffprobe.exe only if the setup helper put them here).
   Delete "$INSTDIR\Subber.exe"
   Delete "$INSTDIR\Uninstall ${APPFRIENDLY}.exe"
   Delete "$INSTDIR\Setup-FFmpeg.bat"
