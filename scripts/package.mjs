@@ -166,6 +166,36 @@ function tarGz(appDir, outFile) {
   run(`tar -C "${parent}" -czf "${outFile}" "${toplevel}"`);
 }
 
+// --- startup crash logging --------------------------------------------------
+// Prepended to the bundled server so a packaged binary never "flashes and
+// dies" silently: any boot error is written to crash.log beside the exe, sent
+// to stderr, and the process is kept alive briefly so a console window stays
+// open when double-clicked. Runs before any app code, so it catches module-load
+// throws too. Disabled with SUBBER_NO_CRASHLOG=1.
+
+const CRASH_HANDLER = `;(function () {
+  if (process.env.SUBBER_NO_CRASHLOG === '1') return;
+  var fs = require('fs'), p = require('path');
+  var base = ('pkg' in process || process.env.SUBBER_PACKAGED === '1')
+    ? p.dirname(process.execPath)
+    : p.join(__dirname, '..');
+  function report(e) {
+    var msg = (e && (e.stack || e.message)) || ('' + e);
+    var out = '[' + new Date().toISOString() + '] Subber crashed:\\n' + msg +
+      '\\nplatform=' + process.platform + ' arch=' + process.arch + ' node=' + process.version + '\\n';
+    try { fs.writeFileSync(p.join(base, 'crash.log'), out); } catch (_) {}
+    try { console.error(out); } catch (_) {}
+    setTimeout(function () {}, 60000);
+  }
+  process.on('uncaughtException', report);
+  process.on('unhandledRejection', report);
+})();`;
+
+function prependCrashHandler(file) {
+  const src = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, CRASH_HANDLER + '\n' + src);
+}
+
 // --- Windows installer (NSIS) ----------------------------------------------
 
 function findMakensis() {
@@ -226,6 +256,7 @@ function build(os) {
       `--outfile="${cjsOut}" --define:import.meta.url=import_meta_url ` +
       `--banner:js="${banner}"`,
   );
+  prependCrashHandler(cjsOut);
 
   // 4. Compile the executable (downloads the prebuilt Node runtime for the target).
   const exePath = path.join(APP, cfg.exe);

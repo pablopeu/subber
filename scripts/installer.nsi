@@ -44,7 +44,7 @@ ShowUnInstDetails show
 ; On the finish page, offer to fetch FFmpeg (needed for export). The box is
 ; opt-in; users can also run the "Download FFmpeg" shortcut later.
 !define MUI_FINISHPAGE_RUN "$INSTDIR\Setup-FFmpeg.bat"
-!define MUI_FINISHPAGE_RUN_TEXT "Download FFmpeg now (required for export — skip if FFmpeg is already installed)"
+!define MUI_FINISHPAGE_RUN_TEXT "Download FFmpeg now (needed for export)"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
