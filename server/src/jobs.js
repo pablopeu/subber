@@ -44,19 +44,25 @@ export async function startExportJob({ videoPath, ass, duration, fontsDir, tmpDi
   await fs.writeFile(assPath, ass, 'utf8');
   await fs.rename(videoPath, inputPath);
 
+  // Copy fonts beside the job so the ass filter can use a RELATIVE fontsdir.
+  // Windows drive letters / backslashes (C:\Users\…) break FFmpeg's filtergraph
+  // escaping; a relative "fonts" has no special characters. Non-fatal: if it
+  // fails, libass falls back to system fonts.
+  await fs.cp(fontsDir, path.join(dir, 'fonts'), { recursive: true }).catch(() => {});
+
   /** @type {Job} */
   const job = { id, status: 'queued', progress: 0, dir, outputPath, createdAt: Date.now() };
   jobs.set(id, job);
 
-  runFfmpeg(job, { inputPath, outputPath, fontsDir, duration, ffmpegPath });
+  runFfmpeg(job, { inputPath, outputPath, duration, ffmpegPath });
   scheduleCleanup(job);
   return job;
 }
 
-function runFfmpeg(job, { inputPath, outputPath, fontsDir, duration, ffmpegPath }) {
-  // Filenames are fixed and the cwd is the job dir, so no filter-graph
-  // escaping issues; only fontsdir is an absolute path (quoted).
-  const vf = `ass=filename=subtitles.ass:fontsdir='${fontsDir}'`;
+function runFfmpeg(job, { inputPath, outputPath, duration, ffmpegPath }) {
+  // filename + fontsdir are both relative to the job dir (the cwd), so there
+  // are no drive letters / backslashes / colons to escape in the filter graph.
+  const vf = `ass=filename=subtitles.ass:fontsdir=fonts`;
   const args = [
     '-y',
     '-i', path.basename(inputPath),
