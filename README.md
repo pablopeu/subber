@@ -49,8 +49,10 @@ Serve `client/dist` from any static host and proxy `/api` + `/fonts` to the serv
 self-contained builds — a single executable (Node runtime + server + built client) plus the
 fonts, a `temp/` inbox and a helper that fetches FFmpeg on first run. Running the executable
 serves everything at `http://localhost:3001` and opens the browser; videos are processed locally
-and never leave the machine. Both targets cross-build from any host OS (@yao-pkg/pkg downloads
-the prebuilt Node runtime for the requested target).
+and never leave the machine. Each target must be built on its own OS: `pkg` embeds V8 bytecode
+compiled by the host Node, so a Windows binary built on Linux (or vice-versa) fails at runtime
+("V8 rejected the bytecode cache"). The release workflow builds Windows on `windows-latest` and
+Linux on `ubuntu-latest`; `scripts/package.mjs` prints a warning when it detects a cross-compile.
 
 | Target | Output | What it is | FFmpeg helper |
 | --- | --- | --- | --- |

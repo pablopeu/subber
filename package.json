@@ -1,7 +1,7 @@
 {
   "name": "subber",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Browser-based subtitle editor with FFmpeg burn-in export",
   "workspaces": [
     "client",
@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@yao-pkg/pkg": "^6.21.0",
+    "adm-zip": "^0.5.16",
     "concurrently": "^9.1.2",
     "esbuild": "^0.28.1"
   }

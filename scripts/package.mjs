@@ -19,6 +19,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import AdmZip from 'adm-zip';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -138,25 +139,14 @@ Variables opcionales: PORT (puerto), FFMPEG_PATH (ruta a ffmpeg), SUBBER_NO_OPEN
 
 // --- archiving -------------------------------------------------------------
 
-function zipWithPython(appDir, outFile) {
-  const script = `
-import os, zipfile
-root = ${JSON.stringify(appDir)}
-out = ${JSON.stringify(outFile)}
-with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-    for base, _, files in os.walk(root):
-        for f in files:
-            p = os.path.join(base, f)
-            z.write(p, os.path.relpath(p, os.path.dirname(root)))
-print('zipped:', out)
-`;
-  const tmp = path.join(path.dirname(outFile), 'zip.py');
-  fs.writeFileSync(tmp, script);
-  try {
-    run(`python3 "${tmp}"`);
-  } finally {
-    fs.rmSync(tmp, { force: true });
-  }
+function zipWithAdm(appDir, outFile) {
+  // Pure-JS zip (no python/zip CLI) so this works identically on Linux, macOS
+  // and the Windows CI runner. Wrap everything under a top-level "Subber/" so
+  // extraction yields a single folder.
+  const zip = new AdmZip();
+  zip.addLocalFolder(appDir, 'Subber');
+  zip.writeZip(outFile);
+  console.log('zipped:', outFile);
 }
 
 function tarGz(appDir, outFile) {
@@ -201,25 +191,42 @@ function prependCrashHandler(file) {
 function findMakensis() {
   // $MAKENSIS wins (lets a rootless build point at a binary not on PATH).
   if (process.env.MAKENSIS && fs.existsSync(process.env.MAKENSIS)) return process.env.MAKENSIS;
-  try {
-    const bin = execSync('command -v makensis', { encoding: 'utf8' }).trim();
-    return bin || null;
-  } catch {
-    return null;
+  // PATH search that works on Windows too (no `command -v` in cmd.exe).
+  const exts =
+    process.platform === 'win32' ? (process.env.PATHEXT || '.EXE').split(';') : [''];
+  const sep = process.platform === 'win32' ? ';' : ':';
+  for (const dir of (process.env.PATH || '').split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, 'makensis' + ext);
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
+  return null;
+}
+
+// Locate NSIS's data dir (Stubs/Include/Plugins): layout differs by installer —
+// Debian puts it at <bin>/../share/nsis, a Windows/zip install keeps it next to
+// makensis. Pick the first candidate that actually has Stubs/ or Include/;
+// return null to let makensis fall back to its compiled-in default (or $NSISDIR).
+function resolveNsisDir(bin) {
+  const dir = path.dirname(bin);
+  const candidates = [path.join(dir, '..', 'share', 'nsis'), dir, path.join(dir, '..')];
+  for (const d of candidates) {
+    if (fs.existsSync(path.join(d, 'Stubs')) || fs.existsSync(path.join(d, 'Include'))) return d;
+  }
+  return null;
 }
 
 function buildInstaller(appDir) {
   const makensis = findMakensis();
   if (!makensis) {
     console.warn('\n⚠ makensis not found — skipping Windows installer.');
-    console.warn('  Install NSIS (Debian: apt-get install nsis) to build Subber-Setup-x64.exe.');
+    console.warn('  Install NSIS (Debian: apt-get install nsis; Windows: choco install nsis) to build it.');
     return;
   }
-  // Data dir is <bin>/../share/nsis for both a system install and a rootless
-  // extraction; tell makensis explicitly so a relocated binary finds Stubs/.
-  const nsisdir = path.resolve(makensis, '..', '..', 'share', 'nsis');
-  const env = fs.existsSync(nsisdir) ? { ...process.env, NSISDIR: nsisdir } : process.env;
+  const nsisdir = resolveNsisDir(makensis);
+  const env = nsisdir ? { ...process.env, NSISDIR: nsisdir } : process.env;
   const outDir = path.dirname(appDir); // dist-win
   const output = path.join(outDir, 'Subber-Setup-x64.exe');
   const nsi = path.join(ROOT, 'scripts', 'installer.nsi');
@@ -236,6 +243,14 @@ function buildInstaller(appDir) {
 function build(os) {
   const cfg = PLATFORMS[os];
   if (!cfg) throw new Error(`Unknown platform "${os}". Use: win | linux`);
+
+  if (os === 'win' && process.platform !== 'win32') {
+    console.warn('\n⚠ Cross-compiling the Windows package on a non-Windows host.');
+    console.warn('  The resulting Subber.exe will FAIL on Windows: pkg embeds V8 bytecode');
+    console.warn('  compiled by the host Node, which the target V8 rejects ("V8 rejected the');
+    console.warn('  bytecode cache"). Build on Windows (the release workflow uses windows-latest)');
+    console.warn('  to get a working binary.');
+  }
 
   const OUT = path.join(ROOT, cfg.distDir);
   const APP = path.join(OUT, 'Subber');
@@ -278,7 +293,7 @@ function build(os) {
 
   // 7. Archive.
   const archivePath = path.join(OUT, cfg.archiveName);
-  if (os === 'win') zipWithPython(APP, archivePath);
+  if (os === 'win') zipWithAdm(APP, archivePath);
   else tarGz(APP, archivePath);
 
   // 8. Windows also gets a proper installer (NSIS) next to the portable zip.
