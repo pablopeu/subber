@@ -1,6 +1,6 @@
 node_modules/
 dist/
-dist-win/
+dist-*/
 temp/
 tmp/
 server/tmp/

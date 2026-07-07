@@ -1,0 +1,55 @@
+name: release
+
+# Builds self-contained Windows + Linux packages and publishes them.
+# - On a `v*` tag: creates a GitHub Release with both archives attached.
+# - On workflow_dispatch: builds and uploads them as workflow artifacts.
+# @yao-pkg/pkg cross-compiles both targets, so a single Ubuntu runner builds
+# the Windows (.zip) and Linux (.tar.gz) packages together.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+
+      - name: Fetch Google Fonts
+        run: npm run fonts
+
+      - name: Build Windows package
+        run: npm run package:win
+
+      - name: Build Linux package
+        run: npm run package:linux
+
+      - name: Upload packages (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: subber-packages
+          path: |
+            dist-win/Subber-win-x64.zip
+            dist-linux/Subber-linux-x64.tar.gz
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-win/Subber-win-x64.zip
+            dist-linux/Subber-linux-x64.tar.gz
+          generate_release_notes: true

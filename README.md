@@ -43,13 +43,30 @@ Open http://localhost:5173.
 Production: `npm run build` (client → `client/dist`), `npm run start` (export server).
 Serve `client/dist` from any static host and proxy `/api` + `/fonts` to the server.
 
-### Windows standalone package
+### Desktop packages (standalone)
 
-`npm run package:win` produces `dist-win/Subber-win-x64.zip` (cross-builds from Linux):
-a portable folder with `Subber.exe` (Node runtime + server + built client), fonts, a `temp/`
-inbox and `Setup-FFmpeg.bat` (downloads FFmpeg beside the exe on first run). Double-clicking
-`Subber.exe` serves everything at `http://localhost:3001` and opens the browser — videos are
-processed locally and never leave the machine.
+`npm run package:win` / `npm run package:linux` (or `npm run package:all`) produce portable,
+self-contained builds — a single executable (Node runtime + server + built client) plus the
+fonts, a `temp/` inbox and a helper that fetches FFmpeg on first run. Running the executable
+serves everything at `http://localhost:3001` and opens the browser; videos are processed locally
+and never leave the machine. Both targets cross-build from any host OS (@yao-pkg/pkg downloads
+the prebuilt Node runtime for the requested target).
+
+| Target | Output | Executable | FFmpeg helper | Format |
+| --- | --- | --- | --- | --- |
+| Windows x64 | `dist-win/Subber-win-x64.zip` | `Subber.exe` | `Setup-FFmpeg.bat` (gyan.dev build) | zip |
+| Linux x64 | `dist-linux/Subber-linux-x64.tar.gz` | `Subber` | `setup-ffmpeg.sh` (apt/dnf/pacman, else static build) | tar.gz |
+
+The Linux archive preserves the executable bit: extract and run `./setup-ffmpeg.sh` (only if
+FFmpeg isn't already on your PATH), then `./Subber`. The Windows zip is double-click friendly:
+`Setup-FFmpeg.bat` first, then `Subber.exe`.
+
+### Releases
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds both packages on CI and
+attaches them to a GitHub Release (with auto-generated notes). Workflow-dispatch builds them as
+downloadable artifacts instead. End users grab the `.zip` / `.tar.gz` from the Releases page — no
+Node or build tooling required.
 
 ### Per-cue styles
 

@@ -12,7 +12,9 @@
     "build": "npm run build -w client",
     "start": "npm run start -w server",
     "fonts": "node server/scripts/fetch-fonts.mjs",
-    "package:win": "node scripts/package-win.mjs"
+    "package:win": "node scripts/package.mjs win",
+    "package:linux": "node scripts/package.mjs linux",
+    "package:all": "node scripts/package.mjs win linux"
   },
   "devDependencies": {
     "@yao-pkg/pkg": "^6.21.0",
