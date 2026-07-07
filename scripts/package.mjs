@@ -259,9 +259,18 @@ function build(os) {
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(APP, { recursive: true });
 
-  // 2. Build the client and place it as web/.
-  run('npm run build -w client');
-  fs.cpSync(path.join(ROOT, 'client/dist'), path.join(APP, 'web'), { recursive: true });
+  // 2. Place the built client as web/. The Vite/rolldown native binding only
+  //    installs for the host platform, so the output (portable HTML/JS/CSS) is
+  //    built once on Linux and reused everywhere via $SUBBER_WEB.
+  let webSrc;
+  if (process.env.SUBBER_WEB) {
+    webSrc = path.resolve(ROOT, process.env.SUBBER_WEB);
+    console.log(`\nUsing pre-built client from ${webSrc}`);
+  } else {
+    run('npm run build -w client');
+    webSrc = path.join(ROOT, 'client/dist');
+  }
+  fs.cpSync(webSrc, path.join(APP, 'web'), { recursive: true });
 
   // 3. Bundle the server to a single CJS file (pkg requires CommonJS).
   const banner = `const import_meta_url = require('url').pathToFileURL(__filename).href;`;

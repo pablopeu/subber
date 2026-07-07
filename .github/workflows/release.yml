@@ -2,15 +2,17 @@ name: release
 
 # Builds Subber NATIVELY per platform and publishes a GitHub Release.
 #
-# pkg embeds V8 bytecode compiled by the host Node, which the target V8 rejects
-# when you cross-compile (e.g. a node22-win binary built on Linux fails on
-# Windows with "V8 rejected the bytecode cache"). So each package is built on
-# its own OS, where pkg can run the target's node to compile matching bytecode.
+# Two cross-platform gotchas drive this layout:
+#   1. pkg embeds V8 bytecode compiled by the host Node — a node22-win binary
+#      built on Linux fails on Windows ("V8 rejected the bytecode cache"). So
+#      each package is built on its own OS.
+#   2. Vite 8's rolldown ships a per-platform native binding whose optional dep
+#      isn't reliably installed from a Linux-generated lockfile on Windows. The
+#      client output is portable, so it's built once on Linux and shared.
 #
-#   - ubuntu-latest  → linux tar.gz
-#   - windows-latest → windows zip + NSIS installer
-#
-# On a `v*` tag: a follow-up job aggregates both and creates the Release.
+#   web  (ubuntu)     → builds the client once → client/dist artifact
+#   build (matrix)    → windows-lastes/win + ubuntu-latest/linux, pkg each
+#   release           → on a `v*` tag, aggregates everything into a Release
 
 on:
   push:
@@ -22,7 +24,23 @@ permissions:
   contents: write
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run build -w client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: client/dist
+          if-no-files-found: error
+
   build:
+    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -46,10 +64,18 @@ jobs:
 
       - run: npm install
 
+      - name: Download pre-built client
+        uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: client/dist
+
       - name: Fetch Google Fonts
         run: npm run fonts
 
       - name: Build ${{ matrix.target }} package
+        env:
+          SUBBER_WEB: client/dist
         run: npm run package:${{ matrix.target }}
 
       - name: Upload packages
@@ -75,7 +101,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/subber-win/Subber-win-x64.zip
-            artifacts/subber-win/Subber-Setup-x64.exe
-            artifacts/subber-linux/Subber-linux-x64.tar.gz
+            artifacts/subber-win/*.zip
+            artifacts/subber-win/*.exe
+            artifacts/subber-linux/*.tar.gz
           generate_release_notes: true
