@@ -129,33 +129,50 @@ if (fs.existsSync(path.join(WEB_DIR, 'index.html'))) {
   });
 }
 
-app.listen(PORT, () => {
+function openBrowser(url) {
+  if (process.env.SUBBER_NO_OPEN === '1') return;
+  if (process.platform === 'win32') {
+    spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } else if (process.platform === 'darwin') {
+    spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+  }
+}
+
+const server = app.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Subber listening on ${url}`);
   console.log(`ffmpeg: ${resolveFfmpeg()} · inbox: ${INBOX_DIR}`);
   if (!fs.existsSync(path.join(FONTS_DIR, 'manifest.json'))) {
     console.warn('No fonts found — run `npm run fonts -w server` to fetch Google Fonts.');
   }
-  // Convenience: pop the browser when running as a packaged desktop app.
-  if (IS_PACKAGED && process.env.SUBBER_NO_OPEN !== '1') {
-    if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    } else if (process.platform === 'darwin') {
-      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-    }
-  }
-  // Windows: also start a system-tray helper (Subber icon with Open / Quit),
-  // so the app can be closed without the console window.
+  // Pop the browser + (on Windows) the system-tray helper.
+  if (IS_PACKAGED) openBrowser(url);
   if (IS_PACKAGED && process.platform === 'win32') {
     const tray = path.join(BASE, 'tray.ps1');
     if (fs.existsSync(tray)) {
-      spawn(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', tray, '-Port', String(PORT)],
-        { detached: true, stdio: 'ignore', windowsHide: true },
-      ).unref();
+      try {
+        spawn(
+          'powershell.exe',
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', tray, '-Port', String(PORT)],
+          { detached: true, stdio: 'ignore', windowsHide: true },
+        ).unref();
+      } catch (e) {
+        console.warn('Could not start tray helper:', e.message);
+      }
     }
   }
+});
+
+// Single instance: if the port is taken, another Subber is already running —
+// focus its window and exit this one instead of starting a second session.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`Subber is already running on port ${PORT}. Opening the existing window.`);
+    openBrowser(`http://localhost:${PORT}`);
+    process.exit(0);
+  }
+  console.error('Failed to listen:', err);
+  process.exit(1);
 });

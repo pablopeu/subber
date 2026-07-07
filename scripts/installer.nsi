@@ -63,7 +63,13 @@ Section "Subber (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
 
-  ; Everything from the built package (Subber.exe, web\, fonts\, Setup-FFmpeg.*).
+  ; Stop a running Subber so its files can be overwritten on reinstall.
+  DetailPrint "Stopping Subber if it is running..."
+  nsExec::ExecToLog 'taskkill /F /IM Subber.exe'
+  Pop $0
+  Sleep 500
+
+  ; Everything from the built package (Subber.exe, web\, fonts\, tray.ps1, Setup-FFmpeg.*).
   File /r "${SRC}\*.*"
   CreateDirectory "$INSTDIR\temp"
 

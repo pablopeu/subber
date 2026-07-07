@@ -106,59 +106,84 @@ function writeFfmpegSetup(os, appDir) {
 // Open / Quit. Self-exits if the server disappears. See server/src/index.js.
 
 const TRAY_PS1 = `param([string]$Port = "3001")
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 $url = "http://localhost:$Port"
+$log = Join-Path $PSScriptRoot 'tray-error.log'
+function Log($m) { try { Add-Content -Path $log -Value "[$(Get-Date -Format o)] $m" } catch {} }
+Log("tray start port=$Port ps=$PSVersionTable.PSVersion")
 
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  [System.Windows.Forms.Application]::EnableVisualStyles()
 
-# Draw a Subber tray icon at runtime: purple square, white S.
-$bmp = New-Object System.Drawing.Bitmap 32, 32
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-$g.Clear([System.Drawing.Color]::FromArgb(255, 109, 92, 255))
-$brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-$font = New-Object System.Drawing.Font 'Segoe UI', 16, ([System.Drawing.FontStyle]::Bold)
-$rect = New-Object System.Drawing.RectangleF 0, 0, 32, 32
-$fmt = New-Object System.Drawing.StringFormat
-$fmt.Alignment = [System.Drawing.StringAlignment]::Center
-$fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-$g.DrawString('S', $font, $brush, $rect, $fmt)
-$g.Dispose()
-$icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+  # Subber icon (purple square + white S); fall back to a system icon if drawing fails.
+  $icon = $null
+  try {
+    $bmp = New-Object System.Drawing.Bitmap 32, 32
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.Clear([System.Drawing.Color]::FromArgb(255, 109, 92, 255))
+    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $font = New-Object System.Drawing.Font 'Segoe UI', 16, ([System.Drawing.FontStyle]::Bold)
+    $rect = New-Object System.Drawing.RectangleF 0, 0, 32, 32
+    $fmt = New-Object System.Drawing.StringFormat
+    $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+    $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $g.DrawString('S', $font, $brush, $rect, $fmt)
+    $g.Dispose()
+    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+    Log("icon drawn")
+  } catch {
+    Log("icon draw failed: $($_.Exception.Message)")
+    $icon = [System.Drawing.SystemIcons]::Application
+  }
 
-$ni = New-Object System.Windows.Forms.NotifyIcon
-$ni.Icon = $icon
-$ni.Text = 'Subber'
-$ni.Visible = $true
+  $ni = New-Object System.Windows.Forms.NotifyIcon
+  $ni.Icon = $icon
+  $ni.Text = 'Subber'
+  $ni.Visible = $true
+  Log("notifyicon visible")
 
-$menu = New-Object System.Windows.Forms.ContextMenu
-$open = $menu.MenuItems.Add('Open Subber')
-[void]$menu.MenuItems.Add('-')
-$quit = $menu.MenuItems.Add('Quit Subber')
-$ni.ContextMenu = $menu
+  $menu = New-Object System.Windows.Forms.ContextMenu
+  $open = $menu.MenuItems.Add('Open Subber')
+  [void]$menu.MenuItems.Add('-')
+  $quit = $menu.MenuItems.Add('Quit Subber')
+  $ni.ContextMenu = $menu
 
-$open.add_Click({ Start-Process $url })
-$ni.add_MouseDoubleClick({ Start-Process $url })
-$quit.add_Click({
-  try { Invoke-WebRequest -UseBasicParsing "$url/api/shutdown" -Method POST -TimeoutSec 2 } catch {}
-  $ni.Visible = $false
-  [System.Windows.Forms.Application]::Exit()
-})
+  $open.add_Click({ try { Start-Process $url } catch {} })
+  $ni.add_MouseDoubleClick({ try { Start-Process $url } catch {} })
+  $quit.add_Click({
+    Log("quit clicked")
+    try { Invoke-WebRequest -UseBasicParsing "$url/api/shutdown" -Method POST -TimeoutSec 2 } catch {}
+    $ni.Visible = $false
+    [System.Windows.Forms.Application]::Exit()
+  })
 
-# Hidden form hosts the message loop; a timer quits the tray if the server dies.
-$form = New-Object System.Windows.Forms.Form
-$form.ShowInTaskbar = $false
-$form.WindowState = 'Minimized'
-$form.Opacity = 0
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 2000
-$timer.add_Tick({
-  try { Invoke-WebRequest -UseBasicParsing "$url/api/fonts" -TimeoutSec 2 | Out-Null }
-  catch { $ni.Visible = $false; [System.Windows.Forms.Application]::Exit() }
-})
-$timer.Start()
-[System.Windows.Forms.Application]::Run($form)
+  # Hidden form (off-screen, transparent) hosts the message loop.
+  $form = New-Object System.Windows.Forms.Form
+  $form.ShowInTaskbar = $false
+  $form.FormBorderStyle = 'FixedToolWindow'
+  $form.Opacity = 0
+  $form.Size = New-Object System.Drawing.Size 0, 0
+  $form.StartPosition = 'Manual'
+  $form.Location = New-Object System.Drawing.Point -32000, -32000
+
+  # Self-exit if the server disappears.
+  $timer = New-Object System.Windows.Forms.Timer
+  $timer.Interval = 3000
+  $timer.add_Tick({
+    try { Invoke-WebRequest -UseBasicParsing "$url/api/fonts" -TimeoutSec 2 | Out-Null }
+    catch { Log("server gone"); $ni.Visible = $false; $form.Close() }
+  })
+  $timer.Start()
+
+  Log("entering message loop")
+  [System.Windows.Forms.Application]::Run($form)
+  Log("tray exited")
+} catch {
+  Log("FATAL: $($_.Exception.Message)")
+}
 `;
 
 function writeTray(appDir) {
