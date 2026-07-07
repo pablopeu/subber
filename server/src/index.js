@@ -110,6 +110,13 @@ app.get('/api/export/:id/download', (req, res) => {
   res.download(job.outputPath, 'video_subtitled.mp4');
 });
 
+// Desktop app "Quit": the browser UI (or the system tray) calls this to stop
+// the server cleanly. Responds first, then exits after a beat.
+app.post('/api/shutdown', (_req, res) => {
+  res.json({ ok: true });
+  setImmediate(() => process.exit(0));
+});
+
 // Packaged mode: serve the built client so the whole app runs from this
 // process — open http://localhost:PORT and everything stays on this machine.
 if (fs.existsSync(path.join(WEB_DIR, 'index.html'))) {
@@ -132,11 +139,23 @@ app.listen(PORT, () => {
   // Convenience: pop the browser when running as a packaged desktop app.
   if (IS_PACKAGED && process.env.SUBBER_NO_OPEN !== '1') {
     if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } else if (process.platform === 'darwin') {
       spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
     } else {
       spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    }
+  }
+  // Windows: also start a system-tray helper (Subber icon with Open / Quit),
+  // so the app can be closed without the console window.
+  if (IS_PACKAGED && process.platform === 'win32') {
+    const tray = path.join(BASE, 'tray.ps1');
+    if (fs.existsSync(tray)) {
+      spawn(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', tray, '-Port', String(PORT)],
+        { detached: true, stdio: 'ignore', windowsHide: true },
+      ).unref();
     }
   }
 });

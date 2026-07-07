@@ -101,6 +101,92 @@ function writeFfmpegSetup(os, appDir) {
   }
 }
 
+// --- Windows system tray (PowerShell + WinForms, no native binary) ---------
+// Spawns next to Subber.exe; draws the Subber icon at runtime and offers
+// Open / Quit. Self-exits if the server disappears. See server/src/index.js.
+
+const TRAY_PS1 = `param([string]$Port = "3001")
+$ErrorActionPreference = 'Stop'
+$url = "http://localhost:$Port"
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Draw a Subber tray icon at runtime: purple square, white S.
+$bmp = New-Object System.Drawing.Bitmap 32, 32
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+$g.Clear([System.Drawing.Color]::FromArgb(255, 109, 92, 255))
+$brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+$font = New-Object System.Drawing.Font 'Segoe UI', 16, ([System.Drawing.FontStyle]::Bold)
+$rect = New-Object System.Drawing.RectangleF 0, 0, 32, 32
+$fmt = New-Object System.Drawing.StringFormat
+$fmt.Alignment = [System.Drawing.StringAlignment]::Center
+$fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+$g.DrawString('S', $font, $brush, $rect, $fmt)
+$g.Dispose()
+$icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+
+$ni = New-Object System.Windows.Forms.NotifyIcon
+$ni.Icon = $icon
+$ni.Text = 'Subber'
+$ni.Visible = $true
+
+$menu = New-Object System.Windows.Forms.ContextMenu
+$open = $menu.MenuItems.Add('Open Subber')
+[void]$menu.MenuItems.Add('-')
+$quit = $menu.MenuItems.Add('Quit Subber')
+$ni.ContextMenu = $menu
+
+$open.add_Click({ Start-Process $url })
+$ni.add_MouseDoubleClick({ Start-Process $url })
+$quit.add_Click({
+  try { Invoke-WebRequest -UseBasicParsing "$url/api/shutdown" -Method POST -TimeoutSec 2 } catch {}
+  $ni.Visible = $false
+  [System.Windows.Forms.Application]::Exit()
+})
+
+# Hidden form hosts the message loop; a timer quits the tray if the server dies.
+$form = New-Object System.Windows.Forms.Form
+$form.ShowInTaskbar = $false
+$form.WindowState = 'Minimized'
+$form.Opacity = 0
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 2000
+$timer.add_Tick({
+  try { Invoke-WebRequest -UseBasicParsing "$url/api/fonts" -TimeoutSec 2 | Out-Null }
+  catch { $ni.Visible = $false; [System.Windows.Forms.Application]::Exit() }
+})
+$timer.Start()
+[System.Windows.Forms.Application]::Run($form)
+`;
+
+function writeTray(appDir) {
+  fs.writeFileSync(path.join(appDir, 'tray.ps1'), TRAY_PS1);
+}
+
+/** Flip a Windows .exe subsystem CONSOLE→GUI so it runs with no cmd window. */
+function hideConsole(exePath) {
+  try {
+    const fd = fs.openSync(exePath, 'r+');
+    try {
+      const off = Buffer.alloc(4);
+      fs.readSync(fd, off, 0, 4, 0x3c);
+      const subOff = off.readUInt32LE(0) + 0x5c; // e_lfanew + PE optional hdr Subsystem
+      const sub = Buffer.alloc(2);
+      fs.readSync(fd, sub, 0, 2, subOff);
+      if (sub.readUInt16LE(0) === 3) {
+        sub.writeUInt16LE(2, 0); // IMAGE_SUBSYSTEM_WINDOWS_GUI
+        fs.writeSync(fd, sub, 0, 2, subOff);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    console.warn(`\n⚠ Could not hide the console window (${err.message}).`);
+  }
+}
+
 function readmeFor(os) {
   if (os === 'win') {
     return `Subber - Subtitle Burn-in Studio (Windows, local)
@@ -108,8 +194,11 @@ function readmeFor(os) {
 
 1. La primera vez: doble click en Setup-FFmpeg.bat (descarga FFmpeg junto al exe).
    Si ya tenes FFmpeg instalado en el PATH, no hace falta.
-2. Doble click en Subber.exe. Se abre el navegador en http://localhost:3001.
+2. Doble click en Subber.exe. Se abre el navegador en http://localhost:3001 y
+   aparece un icono de Subber en la bandeja del sistema (junto al reloj).
 3. Todo corre en esta maquina: el video nunca viaja a ningun servidor.
+4. Para cerrar la app: boton de power (esquina superior derecha de la app) o
+   clic derecho sobre el icono de la bandeja -> Quit Subber.
 
 Carpetas:
   temp\\   -> dejar aca videos o subtitulos para importarlos con un click desde la app
@@ -295,6 +384,7 @@ function build(os) {
   const exePath = path.join(APP, cfg.exe);
   run(`npx @yao-pkg/pkg "${cjsOut}" --target ${cfg.pkgTarget} --output "${exePath}"`);
   if (os === 'linux') fs.chmodSync(exePath, 0o755);
+  if (os === 'win') hideConsole(exePath);
 
   // 5. Fonts (must exist — run `npm run fonts` first if missing).
   const fontsSrc = path.join(ROOT, 'server/fonts');
@@ -307,6 +397,7 @@ function build(os) {
   // 6. Inbox folder + FFmpeg setup helper + readme.
   fs.mkdirSync(path.join(APP, 'temp'), { recursive: true });
   writeFfmpegSetup(os, APP);
+  if (os === 'win') writeTray(APP);
   fs.writeFileSync(path.join(APP, 'LEEME.txt'), readmeFor(os));
 
   // 7. Archive.

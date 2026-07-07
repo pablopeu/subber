@@ -146,6 +146,20 @@ function Header({ onExport }: { onExport: () => void }) {
       <button className="btn btn--primary" onClick={onExport} disabled={!hasVideo || subtitleCount === 0}>
         Export
       </button>
+      <button
+        className="btn btn--ghost header__quit"
+        title="Quit Subber (stops the local server)"
+        aria-label="Quit Subber"
+        onClick={() => {
+          fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
+          setTimeout(() => window.close(), 300);
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M12 4v8" />
+          <path d="M7.5 7a7 7 0 1 0 9 0" />
+        </svg>
+      </button>
     </header>
   );
 }
