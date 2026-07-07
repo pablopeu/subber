@@ -1,0 +1,22 @@
+{
+  "name": "subber",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser-based subtitle editor with FFmpeg burn-in export",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "fonts": "node server/scripts/fetch-fonts.mjs",
+    "package:win": "node scripts/package-win.mjs"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.21.0",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.28.1"
+  }
+}

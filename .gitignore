@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-win/
+temp/
+tmp/
+server/tmp/
+server/fonts/*.ttf
+server/fonts/manifest.json
+*.log
+.DS_Store

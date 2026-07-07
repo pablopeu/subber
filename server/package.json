@@ -1,0 +1,16 @@
+{
+  "name": "subber-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "FFmpeg export backend for Subber",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "fonts": "node scripts/fetch-fonts.mjs"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.2.0"
+  }
+}
