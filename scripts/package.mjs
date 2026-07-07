@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+
 const PLATFORMS = {
   win: {
     pkgTarget: 'node22-win-x64',
@@ -164,6 +166,41 @@ function tarGz(appDir, outFile) {
   run(`tar -C "${parent}" -czf "${outFile}" "${toplevel}"`);
 }
 
+// --- Windows installer (NSIS) ----------------------------------------------
+
+function findMakensis() {
+  // $MAKENSIS wins (lets a rootless build point at a binary not on PATH).
+  if (process.env.MAKENSIS && fs.existsSync(process.env.MAKENSIS)) return process.env.MAKENSIS;
+  try {
+    const bin = execSync('command -v makensis', { encoding: 'utf8' }).trim();
+    return bin || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildInstaller(appDir) {
+  const makensis = findMakensis();
+  if (!makensis) {
+    console.warn('\n⚠ makensis not found — skipping Windows installer.');
+    console.warn('  Install NSIS (Debian: apt-get install nsis) to build Subber-Setup-x64.exe.');
+    return;
+  }
+  // Data dir is <bin>/../share/nsis for both a system install and a rootless
+  // extraction; tell makensis explicitly so a relocated binary finds Stubs/.
+  const nsisdir = path.resolve(makensis, '..', '..', 'share', 'nsis');
+  const env = fs.existsSync(nsisdir) ? { ...process.env, NSISDIR: nsisdir } : process.env;
+  const outDir = path.dirname(appDir); // dist-win
+  const output = path.join(outDir, 'Subber-Setup-x64.exe');
+  const nsi = path.join(ROOT, 'scripts', 'installer.nsi');
+  console.log(`\n$ makensis installer.nsi (NSISDIR=${nsisdir})`);
+  execSync(
+    `"${makensis}" -V2 -DVER=${VERSION} -DSRC="${appDir}" -DOUTPUT="${output}" "${nsi}"`,
+    { cwd: ROOT, stdio: 'inherit', env },
+  );
+  console.log(`\n✔ installer ready: ${output}`);
+}
+
 // --- main ------------------------------------------------------------------
 
 function build(os) {
@@ -212,6 +249,9 @@ function build(os) {
   const archivePath = path.join(OUT, cfg.archiveName);
   if (os === 'win') zipWithPython(APP, archivePath);
   else tarGz(APP, archivePath);
+
+  // 8. Windows also gets a proper installer (NSIS) next to the portable zip.
+  if (os === 'win') buildInstaller(APP);
 
   console.log(`\n✔ ${os} package ready: ${archivePath}`);
 }

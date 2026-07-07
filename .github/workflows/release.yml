@@ -25,12 +25,15 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install NSIS (for the Windows installer)
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
       - run: npm install
 
       - name: Fetch Google Fonts
         run: npm run fonts
 
-      - name: Build Windows package
+      - name: Build Windows package + installer
         run: npm run package:win
 
       - name: Build Linux package
@@ -42,6 +45,7 @@ jobs:
           name: subber-packages
           path: |
             dist-win/Subber-win-x64.zip
+            dist-win/Subber-Setup-x64.exe
             dist-linux/Subber-linux-x64.tar.gz
           if-no-files-found: error
 
@@ -51,5 +55,6 @@ jobs:
         with:
           files: |
             dist-win/Subber-win-x64.zip
+            dist-win/Subber-Setup-x64.exe
             dist-linux/Subber-linux-x64.tar.gz
           generate_release_notes: true

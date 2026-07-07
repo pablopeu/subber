@@ -1,7 +1,7 @@
 {
   "name": "subber",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Browser-based subtitle editor with FFmpeg burn-in export",
   "workspaces": [
     "client",

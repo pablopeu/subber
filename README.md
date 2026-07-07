@@ -52,21 +52,26 @@ serves everything at `http://localhost:3001` and opens the browser; videos are p
 and never leave the machine. Both targets cross-build from any host OS (@yao-pkg/pkg downloads
 the prebuilt Node runtime for the requested target).
 
-| Target | Output | Executable | FFmpeg helper | Format |
-| --- | --- | --- | --- | --- |
-| Windows x64 | `dist-win/Subber-win-x64.zip` | `Subber.exe` | `Setup-FFmpeg.bat` (gyan.dev build) | zip |
-| Linux x64 | `dist-linux/Subber-linux-x64.tar.gz` | `Subber` | `setup-ffmpeg.sh` (apt/dnf/pacman, else static build) | tar.gz |
+| Target | Output | What it is | FFmpeg helper |
+| --- | --- | --- | --- |
+| Windows (installer) | `dist-win/Subber-Setup-x64.exe` | NSIS installer: per-user install, Start Menu/Desktop shortcuts, Add/Remove Programs entry, uninstaller | offered on the finish page + "Download FFmpeg" shortcut |
+| Windows (portable) | `dist-win/Subber-win-x64.zip` | portable folder | `Setup-FFmpeg.bat` (gyan.dev build) |
+| Linux x64 | `dist-linux/Subber-linux-x64.tar.gz` | portable folder | `setup-ffmpeg.sh` (apt/dnf/pacman, else static build) |
+
+The Windows installer needs NSIS (`makensis`) on the build host — `apt-get install nsis` on
+Debian/Ubuntu, or set `MAKENSIS` to point at a binary not on PATH. If `makensis` is absent,
+`package:win` still produces the portable zip and skips the installer.
 
 The Linux archive preserves the executable bit: extract and run `./setup-ffmpeg.sh` (only if
-FFmpeg isn't already on your PATH), then `./Subber`. The Windows zip is double-click friendly:
-`Setup-FFmpeg.bat` first, then `Subber.exe`.
+FFmpeg isn't already on your PATH), then `./Subber`. The portable Windows zip is double-click
+friendly: `Setup-FFmpeg.bat` first, then `Subber.exe`.
 
 ### Releases
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds both packages on CI and
-attaches them to a GitHub Release (with auto-generated notes). Workflow-dispatch builds them as
-downloadable artifacts instead. End users grab the `.zip` / `.tar.gz` from the Releases page — no
-Node or build tooling required.
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the installer, the
+portable Windows zip and the Linux tar.gz on CI and attaches all three to a GitHub Release (with
+auto-generated notes). Workflow-dispatch builds them as downloadable artifacts instead. End users
+grab the files from the Releases page — no Node or build tooling required.
 
 ### Per-cue styles
 
