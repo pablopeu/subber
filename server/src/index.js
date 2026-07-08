@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getJob, startExportJob } from './jobs.js';
-import { FONTS_DIR, INBOX_DIR, IS_PACKAGED, TMP_DIR, WEB_DIR, resolveFfmpeg } from './paths.js';
+import { BASE, FONTS_DIR, INBOX_DIR, IS_PACKAGED, TMP_DIR, WEB_DIR, resolveFfmpeg } from './paths.js';
 
 /**
  * Subber export backend.
@@ -12,11 +12,16 @@ import { FONTS_DIR, INBOX_DIR, IS_PACKAGED, TMP_DIR, WEB_DIR, resolveFfmpeg } fr
  * Endpoints:
  *   GET  /api/fonts                → font manifest (family + TTF base path)
  *   GET  /fonts/<file>.ttf         → font files (shared by browser & FFmpeg)
- *   POST /api/export               → start a burn-in job (video + ASS)
+ *   POST /api/export               → start a burn-in job (video + ASS, or a videoPath)
  *   GET  /api/export/:id           → job status/progress
  *   GET  /api/export/:id/download  → rendered MP4
  *   GET  /api/inbox                → media/subtitle files dropped in <repo>/temp
  *   GET  /api/inbox/:name          → download one inbox file
+ *   POST /api/pick-file            → native OS file dialog, returns the chosen path
+ *   GET  /api/local-file           → streams a video from an arbitrary local path
+ *                                    (so a re-opened project can restore its video
+ *                                    without asking the user to re-select it, if it
+ *                                    hasn't moved) — local requests only.
  */
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -43,6 +48,58 @@ app.get('/api/fonts', (_req, res) => {
 
 const SUBTITLE_EXT = /\.(srt|vtt|ass|ssa|sub|txt)$/i;
 const VIDEO_EXT = /\.(mp4|mov|mkv|webm)$/i;
+
+// Requests from anywhere but this machine are rejected before reaching a
+// route — belt-and-suspenders alongside binding the server to 127.0.0.1
+// below, specifically for the two endpoints that read the local filesystem
+// by an arbitrary path (pick-file / local-file).
+function localOnly(req, res, next) {
+  const ip = req.socket.remoteAddress || '';
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+  res.status(403).send('Local access only');
+}
+
+/** A path is servable only if it's absolute, exists, is a regular file, and looks like a video. */
+function isServableLocalVideo(p) {
+  if (typeof p !== 'string' || !p || !path.isAbsolute(p) || !VIDEO_EXT.test(p)) return false;
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Native "open file" dialog run on the server (it has real filesystem
+ * access; a browser tab never does): PowerShell + WinForms on Windows,
+ * zenity on Linux. Resolves the chosen absolute path, or null if the user
+ * cancelled. Rejects if the platform helper isn't available.
+ */
+function pickFileNative() {
+  return new Promise((resolve, reject) => {
+    const isWin = process.platform === 'win32';
+    const cmd = isWin ? 'powershell.exe' : 'zenity';
+    const args = isWin
+      ? ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path.join(BASE, 'scripts', 'pick-file.ps1')]
+      : [
+          '--file-selection',
+          '--title=Select video',
+          '--file-filter=Video files | *.mp4 *.mov *.mkv *.webm',
+        ];
+    const proc = spawn(cmd, args, { windowsHide: true });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (err += d));
+    proc.on('error', reject); // e.g. ENOENT — zenity/powershell not installed
+    proc.on('close', (code) => {
+      const chosen = out.trim();
+      if (chosen) resolve(chosen);
+      else if (code === 0 || code === 1) resolve(null); // no file chosen == cancelled
+      else reject(new Error(err.trim() || `native picker exited ${code}`));
+    });
+  });
+}
 
 app.get('/api/inbox', (_req, res) => {
   if (!fs.existsSync(INBOX_DIR)) {
@@ -75,15 +132,38 @@ app.get('/api/inbox/:name', (req, res) => {
   res.sendFile(file);
 });
 
+app.post('/api/pick-file', localOnly, async (_req, res) => {
+  try {
+    const filePath = await pickFileNative();
+    res.json({ path: filePath });
+  } catch (err) {
+    // Platform helper missing/failed — the client falls back to the
+    // classic <input type="file">, which never gives us a real path.
+    res.status(501).send(err instanceof Error ? err.message : 'Native file picker unavailable');
+  }
+});
+
+app.get('/api/local-file', localOnly, (req, res) => {
+  const p = req.query.path;
+  if (!isServableLocalVideo(p)) return res.status(404).send('Not found');
+  res.sendFile(path.resolve(p));
+});
+
 app.post('/api/export', upload.single('video'), async (req, res) => {
   try {
-    const { ass, duration } = req.body ?? {};
-    if (!req.file) return res.status(400).send('Missing video file');
+    const { ass, duration, videoPath: sourcePath } = req.body ?? {};
+    if (!req.file && !sourcePath) return res.status(400).send('Missing video file');
     if (typeof ass !== 'string' || !ass.includes('[Events]')) {
       return res.status(400).send('Missing or invalid ASS subtitle data');
     }
+    if (sourcePath && !isServableLocalVideo(sourcePath)) {
+      return res.status(400).send('videoPath is not a valid local video file');
+    }
     const job = await startExportJob({
-      videoPath: req.file.path,
+      videoPath: req.file?.path,
+      // A path-restored video is exported straight from where it already
+      // lives — no re-upload, and the original file is never moved or copied.
+      sourceVideoPath: req.file ? undefined : sourcePath,
       ass,
       duration: Number(duration) || 0,
       fontsDir: FONTS_DIR,
@@ -140,7 +220,10 @@ function openBrowser(url) {
   }
 }
 
-const server = app.listen(PORT, () => {
+// Bound to loopback only: nothing here is meant to be reachable off this
+// machine (the /api/local-file and /api/pick-file endpoints in particular
+// touch the local filesystem by an arbitrary path — see localOnly above).
+const server = app.listen(PORT, '127.0.0.1', () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Subber listening on ${url}`);
   console.log(`ffmpeg: ${resolveFfmpeg()} · inbox: ${INBOX_DIR}`);

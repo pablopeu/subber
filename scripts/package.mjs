@@ -422,7 +422,14 @@ function build(os) {
   // 6. Inbox folder + FFmpeg setup helper + readme.
   fs.mkdirSync(path.join(APP, 'temp'), { recursive: true });
   writeFfmpegSetup(os, APP);
-  if (os === 'win') writeTray(APP);
+  if (os === 'win') {
+    writeTray(APP);
+    // Native "select a video" dialog (see server/src/index.js's pickFileNative);
+    // resolved at runtime via BASE/scripts/pick-file.ps1, same relative layout
+    // as in dev mode (server/scripts/pick-file.ps1).
+    fs.mkdirSync(path.join(APP, 'scripts'), { recursive: true });
+    fs.cpSync(path.join(ROOT, 'server/scripts/pick-file.ps1'), path.join(APP, 'scripts', 'pick-file.ps1'));
+  }
   fs.writeFileSync(path.join(APP, 'LEEME.txt'), readmeFor(os));
 
   // 7. Archive.

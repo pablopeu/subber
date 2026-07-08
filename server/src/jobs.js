@@ -30,19 +30,36 @@ export function getJob(id) {
 }
 
 /**
- * @param {{ videoPath: string, ass: string, duration: number, fontsDir: string, tmpDir: string, ffmpegPath?: string }} opts
+ * @param {{ videoPath?: string, sourceVideoPath?: string, ass: string, duration: number, fontsDir: string, tmpDir: string, ffmpegPath?: string }} opts
  * @returns {Promise<Job>}
  */
-export async function startExportJob({ videoPath, ass, duration, fontsDir, tmpDir, ffmpegPath = 'ffmpeg' }) {
+export async function startExportJob({
+  videoPath,
+  sourceVideoPath,
+  ass,
+  duration,
+  fontsDir,
+  tmpDir,
+  ffmpegPath = 'ffmpeg',
+}) {
   const id = randomUUID();
   const dir = path.join(tmpDir, id);
   await fs.mkdir(dir, { recursive: true });
 
   const assPath = path.join(dir, 'subtitles.ass');
-  const inputPath = path.join(dir, 'input' + path.extname(videoPath));
   const outputPath = path.join(dir, 'output.mp4');
   await fs.writeFile(assPath, ass, 'utf8');
-  await fs.rename(videoPath, inputPath);
+
+  // A path-restored video is read straight from where it already lives — no
+  // upload happened, and the user's original file is never moved or copied,
+  // only the (disposable) multer temp upload is.
+  let inputPath;
+  if (sourceVideoPath) {
+    inputPath = sourceVideoPath;
+  } else {
+    inputPath = path.join(dir, 'input' + path.extname(videoPath));
+    await fs.rename(videoPath, inputPath);
+  }
 
   // Copy fonts beside the job so the ass filter can use a RELATIVE fontsdir.
   // Windows drive letters / backslashes (C:\Users\…) break FFmpeg's filtergraph
@@ -61,11 +78,14 @@ export async function startExportJob({ videoPath, ass, duration, fontsDir, tmpDi
 
 function runFfmpeg(job, { inputPath, outputPath, duration, ffmpegPath }) {
   // filename + fontsdir are both relative to the job dir (the cwd), so there
-  // are no drive letters / backslashes / colons to escape in the filter graph.
+  // are no drive letters / backslashes / colons to escape in the filter graph
+  // — unlike -i, which isn't part of that colon-delimited option string, so
+  // an absolute path (needed for a path-restored video living elsewhere) is
+  // always safe there.
   const vf = `ass=filename=subtitles.ass:fontsdir=fonts`;
   const args = [
     '-y',
-    '-i', path.basename(inputPath),
+    '-i', inputPath,
     '-vf', vf,
     '-c:v', 'libx264',
     '-preset', 'veryfast',

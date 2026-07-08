@@ -19,7 +19,9 @@ export interface ExportProgress {
 }
 
 export interface ExportRequest {
-  videoFile: File;
+  /** Either an actual File to upload, or videoPath (a path-restored video the server already has). */
+  videoFile?: File;
+  videoPath?: string;
   subtitles: Subtitle[];
   style: SubtitleStyle;
   video: VideoDimensions & { duration: number };
@@ -39,7 +41,15 @@ export class ServerFFmpegExporter implements Exporter {
     const form = new FormData();
     form.append('ass', ass);
     form.append('duration', String(req.video.duration));
-    form.append('video', req.videoFile, req.videoFile.name);
+    // A path-restored video is exported straight from where it already
+    // lives — the server can read it directly, no upload needed.
+    if (req.videoPath) {
+      form.append('videoPath', req.videoPath);
+    } else if (req.videoFile) {
+      form.append('video', req.videoFile, req.videoFile.name);
+    } else {
+      throw new Error('Nothing to export: no video file or path');
+    }
 
     const startRes = await fetch('/api/export', { method: 'POST', body: form });
     if (!startRes.ok) {

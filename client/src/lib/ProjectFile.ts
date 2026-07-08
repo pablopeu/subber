@@ -7,8 +7,10 @@ import { DEFAULT_STYLE } from '../types/Style';
  * Project file: the editor's own save/load format (distinct from .ass/.srt
  * export). It captures everything needed to resume editing — subtitles,
  * style, and video metadata for reference — but never the video itself, so
- * files stay small; reopening a project still requires re-selecting the
- * source video.
+ * files stay small. When the video was attached via the native file picker
+ * (see ProjectFile.ts / Editor.tsx's pickVideo), `video.path` lets reopening
+ * restore it with zero clicks by asking the local server to stream it back
+ * from that same path; otherwise the user re-selects it once.
  */
 
 export const PROJECT_EXTENSION = '.subber.json';
@@ -18,6 +20,8 @@ export interface ProjectVideoInfo {
   width: number;
   height: number;
   duration: number;
+  /** Absolute local path, only present when picked via the native dialog. */
+  path?: string;
 }
 
 interface ProjectFileV1 {
@@ -82,6 +86,8 @@ export function parseProjectFile(text: string): LoadedProject {
   const subtitles = sortSubtitles(d.subtitles.map(parseSubtitle).filter((s): s is Subtitle => s !== null));
   const style: SubtitleStyle = { ...DEFAULT_STYLE, ...(d.style && typeof d.style === 'object' ? d.style : {}) };
   const video =
-    d.video && typeof d.video === 'object' && typeof d.video.name === 'string' ? d.video : null;
+    d.video && typeof d.video === 'object' && typeof d.video.name === 'string'
+      ? { ...d.video, path: typeof d.video.path === 'string' ? d.video.path : undefined }
+      : null;
   return { subtitles, style, video };
 }

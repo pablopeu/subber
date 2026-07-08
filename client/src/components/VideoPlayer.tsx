@@ -72,11 +72,14 @@ export function VideoPlayer() {
       setCurrentTime(video.currentTime);
     };
     const onLoaded = () => {
+      const s = useEditorStore.getState();
+      const pathName = s.videoPath?.split(/[\\/]/).pop();
       setVideoMeta({
         duration: video.duration,
         width: video.videoWidth,
         height: video.videoHeight,
-        name: useEditorStore.getState().videoFile?.name ?? 'video',
+        name: s.videoFile?.name ?? pathName ?? 'video',
+        path: s.videoPath ?? undefined,
       });
     };
     video.addEventListener('play', onPlay);

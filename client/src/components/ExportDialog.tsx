@@ -11,6 +11,7 @@ import { toSrt } from '../lib/SubtitleParser';
  */
 export function ExportDialog({ onClose }: { onClose: () => void }) {
   const videoFile = useEditorStore((s) => s.videoFile);
+  const videoPath = useEditorStore((s) => s.videoPath);
   const videoMeta = useEditorStore((s) => s.videoMeta);
   const subtitles = useEditorStore((s) => s.subtitles);
   const style = useEditorStore((s) => s.style);
@@ -18,16 +19,16 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canExport = !!videoFile && !!videoMeta && subtitles.length > 0;
+  const canExport = !!(videoFile || videoPath) && !!videoMeta && subtitles.length > 0;
   const busy = progress !== null && progress.status !== 'done' && progress.status !== 'error';
-  const outName = videoFile ? videoFile.name.replace(/\.[^.]+$/, '') + '_subtitled.mp4' : 'video.mp4';
+  const outName = videoMeta ? videoMeta.name.replace(/\.[^.]+$/, '') + '_subtitled.mp4' : 'video.mp4';
 
   const startExport = async () => {
-    if (!videoFile || !videoMeta) return;
+    if (!(videoFile || videoPath) || !videoMeta) return;
     setError(null);
     try {
       const blob = await exporter.export(
-        { videoFile, subtitles, style, video: videoMeta },
+        { videoFile: videoFile ?? undefined, videoPath: videoPath ?? undefined, subtitles, style, video: videoMeta },
         setProgress,
       );
       downloadBlob(blob, outName);

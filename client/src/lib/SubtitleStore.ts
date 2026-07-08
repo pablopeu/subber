@@ -20,19 +20,28 @@ export interface VideoMeta {
   width: number;
   height: number;
   name: string;
+  /** Absolute local path, only present when picked via the native dialog. */
+  path?: string;
+}
+
+/** Where the server streams a path-restored video from — see /api/local-file. */
+export function localFileUrl(filePath: string): string {
+  return `/api/local-file?path=${encodeURIComponent(filePath)}`;
 }
 
 interface EditorState {
   // Video
   videoUrl: string | null;
   videoFile: File | null;
+  /** Absolute local path when the video was restored/picked by path (see setVideoByPath). */
+  videoPath: string | null;
   videoMeta: VideoMeta | null;
   currentTime: number;
   isPlaying: boolean;
   /**
-   * The video a loaded project expects (name/dimensions/duration), shown as
-   * a hint until the matching file is actually attached via setVideo — a
-   * project file never embeds the video itself.
+   * The video a loaded project expects (name/dimensions/duration/path), shown
+   * as a hint until the matching file is actually attached — a project file
+   * never embeds the video itself.
    */
   expectedVideo: VideoMeta | null;
 
@@ -55,6 +64,8 @@ interface EditorState {
 
   // Actions
   setVideo(file: File): void;
+  /** Attaches a video the server can read directly by path — no upload, no re-fetch as a Blob. */
+  setVideoByPath(filePath: string): void;
   setVideoMeta(meta: VideoMeta): void;
   setCurrentTime(t: number): void;
   setPlaying(p: boolean): void;
@@ -134,6 +145,7 @@ function createEditorStore() {
     return {
       videoUrl: null,
       videoFile: null,
+      videoPath: null,
       videoMeta: null,
       expectedVideo: null,
       currentTime: 0,
@@ -150,10 +162,25 @@ function createEditorStore() {
 
       setVideo(file) {
         const prev = get().videoUrl;
-        if (prev) URL.revokeObjectURL(prev);
+        if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
         set({
           videoFile: file,
+          videoPath: null,
           videoUrl: URL.createObjectURL(file),
+          videoMeta: null,
+          expectedVideo: null,
+          currentTime: 0,
+          isPlaying: false,
+        });
+      },
+
+      setVideoByPath(filePath) {
+        const prev = get().videoUrl;
+        if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+        set({
+          videoFile: null,
+          videoPath: filePath,
+          videoUrl: localFileUrl(filePath),
           videoMeta: null,
           expectedVideo: null,
           currentTime: 0,
@@ -321,10 +348,11 @@ function createEditorStore() {
 
       newProject() {
         const prev = get().videoUrl;
-        if (prev) URL.revokeObjectURL(prev);
+        if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
         set({
           videoUrl: null,
           videoFile: null,
+          videoPath: null,
           videoMeta: null,
           expectedVideo: null,
           currentTime: 0,

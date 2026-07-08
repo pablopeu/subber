@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type React from 'react';
-import { isDirty, togglePlayback, useEditorStore } from '../lib/SubtitleStore';
+import { isDirty, localFileUrl, togglePlayback, useEditorStore } from '../lib/SubtitleStore';
 import { parseSubtitleFileFromFile, SUBTITLE_EXTENSIONS } from '../lib/SubtitleParser';
 import { loadFonts } from '../lib/fonts';
 import { downloadBlob } from '../lib/FFmpegExporter';
@@ -190,14 +190,24 @@ function quitApp(): void {
   setTimeout(() => window.close(), 300);
 }
 
+/** True if the local server can currently stream this exact path (it hasn't moved/been deleted). */
+async function localFileStillExists(filePath: string): Promise<boolean> {
+  try {
+    const res = await fetch(localFileUrl(filePath), { method: 'HEAD' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 function Header({ onExport }: { onExport: () => void }) {
   const hasVideo = useEditorStore((s) => s.videoUrl !== null);
   const subtitles = useEditorStore((s) => s.subtitles);
   const style = useEditorStore((s) => s.style);
-  const videoFile = useEditorStore((s) => s.videoFile);
   const videoMeta = useEditorStore((s) => s.videoMeta);
   const dirty = useEditorStore(isDirty);
   const setVideo = useEditorStore((s) => s.setVideo);
+  const setVideoByPath = useEditorStore((s) => s.setVideoByPath);
   const setSubtitles = useEditorStore((s) => s.setSubtitles);
   const newProject = useEditorStore((s) => s.newProject);
   const loadProject = useEditorStore((s) => s.loadProject);
@@ -213,8 +223,24 @@ function Header({ onExport }: { onExport: () => void }) {
   const saveProject = () => {
     const video = videoMeta ? { ...videoMeta } : null;
     const json = serializeProject(subtitles, style, video);
-    downloadBlob(json, projectFileName(videoFile?.name));
+    downloadBlob(json, projectFileName(videoMeta?.name));
     markSaved();
+  };
+
+  // Tries the server's native OS file dialog first (it has real filesystem
+  // access, so it can report an absolute path — a browser tab never can);
+  // falls back to the classic <input type="file"> if that's unavailable
+  // (missing zenity/kdialog on Linux, or any other failure).
+  const pickVideo = async () => {
+    try {
+      const res = await fetch('/api/pick-file', { method: 'POST' });
+      if (!res.ok) throw new Error('native picker unavailable');
+      const { path } = (await res.json()) as { path: string | null };
+      if (path) setVideoByPath(path);
+      // path === null means the user cancelled the native dialog — leave it at that.
+    } catch {
+      videoInput.current?.click();
+    }
   };
 
   const openProjectFile = async (file: File) => {
@@ -222,11 +248,14 @@ function Header({ onExport }: { onExport: () => void }) {
       const { subtitles: subs, style: st, video } = parseProjectFile(await file.text());
       loadProject({ subtitles: subs, style: st, video });
       setProjectError(false);
-      // The project file only stores the video's name/metadata, never its
-      // bytes (a normal browser tab can't read a file by path — only ones
-      // the user actively picks) — so immediately prompt for it, letting
-      // the user browse to wherever it actually lives.
-      videoInput.current?.click();
+      // If this project remembers an absolute path and the file is still
+      // there, restore it with zero clicks; otherwise fall back to picking
+      // it again (native dialog, or the classic file input).
+      if (video?.path && (await localFileStillExists(video.path))) {
+        setVideoByPath(video.path);
+      } else {
+        void pickVideo();
+      }
     } catch {
       setProjectError(true);
     }
@@ -304,7 +333,7 @@ function Header({ onExport }: { onExport: () => void }) {
         <button className="btn btn--ghost" onClick={() => projectInput.current?.click()}>
           Open project
         </button>
-        <button className="btn btn--ghost" onClick={() => videoInput.current?.click()}>
+        <button className="btn btn--ghost" onClick={() => void pickVideo()}>
           {hasVideo ? 'Replace video' : 'Upload video'}
         </button>
         <button className="btn btn--ghost" onClick={() => srtInput.current?.click()}>
