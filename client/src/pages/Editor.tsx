@@ -5,6 +5,7 @@ import { parseSubtitleFileFromFile, SUBTITLE_EXTENSIONS } from '../lib/SubtitleP
 import { loadFonts } from '../lib/fonts';
 import { downloadBlob } from '../lib/FFmpegExporter';
 import { parseProjectFile, PROJECT_EXTENSION, projectFileName, serializeProject } from '../lib/ProjectFile';
+import { pickVideoPathNative } from '../lib/nativeFilePicker';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { SubtitleTimeline } from '../components/SubtitleTimeline';
 import { SubtitleEditor } from '../components/SubtitleEditor';
@@ -233,9 +234,7 @@ function Header({ onExport }: { onExport: () => void }) {
   // (missing zenity/kdialog on Linux, or any other failure).
   const pickVideo = async () => {
     try {
-      const res = await fetch('/api/pick-file', { method: 'POST' });
-      if (!res.ok) throw new Error('native picker unavailable');
-      const { path } = (await res.json()) as { path: string | null };
+      const path = await pickVideoPathNative();
       if (path) setVideoByPath(path);
       // path === null means the user cancelled the native dialog — leave it at that.
     } catch {

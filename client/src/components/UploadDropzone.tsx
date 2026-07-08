@@ -6,6 +6,7 @@ import {
   parseSubtitleFile,
   SUBTITLE_EXTENSIONS,
 } from '../lib/SubtitleParser';
+import { pickVideoPathNative } from '../lib/nativeFilePicker';
 import { ServerInbox } from './ServerInbox';
 
 const VIDEO_EXT = /\.(mp4|mov|mkv|webm)$/i;
@@ -18,10 +19,25 @@ const SUB_EXT = new RegExp(`(${SUBTITLE_EXTENSIONS.join('|').replace(/\./g, '\\.
  */
 export function UploadDropzone() {
   const setVideo = useEditorStore((s) => s.setVideo);
+  const setVideoByPath = useEditorStore((s) => s.setVideoByPath);
   const setSubtitles = useEditorStore((s) => s.setSubtitles);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Clicking to pick (as opposed to dragging) tries the server's native OS
+  // dialog first, same as the header's "Upload video" button — it reports a
+  // real absolute path, so a saved project can restore this video with zero
+  // clicks next time. Falls back to the classic multi-select input (which
+  // also lets a subtitle be picked in the same go) if that's unavailable.
+  const pickVideo = async () => {
+    try {
+      const path = await pickVideoPathNative();
+      if (path) setVideoByPath(path);
+    } catch {
+      inputRef.current?.click();
+    }
+  };
 
   const handleFiles = async (files: FileList | File[]) => {
     setError(null);
@@ -58,7 +74,7 @@ export function UploadDropzone() {
       }}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
-      onClick={() => inputRef.current?.click()}
+      onClick={() => void pickVideo()}
     >
       <input
         ref={inputRef}
